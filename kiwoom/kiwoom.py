@@ -1,10 +1,9 @@
 import os
 import sys
-
 from PyQt5.QAxContainer import *
 from PyQt5.QtCore import * 
-from config.errorCode import *
 from PyQt5.QtTest import *
+from config.errorCode import *
 from config.kiwoomType import *
 
 class Kiwoom(QAxWidget):
@@ -25,6 +24,7 @@ class Kiwoom(QAxWidget):
         self.account_stock_dict = {}
         self.not_account_stock_dict = {}
         self.jango_dict = {}
+        self.logging = None
         ########################
 
         #########스크린번호
@@ -100,7 +100,6 @@ class Kiwoom(QAxWidget):
         self.dynamicCall('SetInputValue(QString,QString)','비밀번호입력매체구분','00')
         self.dynamicCall('SetInputValue(QString,QString)','조회구분','2')
         self.dynamicCall('CommRqData(String,String,int,String)','예수금상세현황요청','opw00001','0',self.screen_my_info)
-
         self.detail_account_info_event_loop.exec_()
     
     def detail_account_mystock(self, sPrevNext='0'):
@@ -186,7 +185,7 @@ class Kiwoom(QAxWidget):
                 self.account_stock_dict[code].update({'매입금액': total_chegual_price})
                 self.account_stock_dict[code].update({'매매가능수량': possible_quantity})
                 cnt += 1
-                # print('%s' % self.account_stock_dict[code]['종목명'])
+                print('%s %s' % (code, self.account_stock_dict[code]['종목명']))
             print('계좌에 가지고 있는 종목수량 %s' % cnt)
                  
             if sPrevNext == '2':
@@ -401,9 +400,14 @@ class Kiwoom(QAxWidget):
 
             cnt += 1
 
-        print(self.portfolio_stock_dict)
+        # print(self.portfolio_stock_dict)
 
+    # 장 시작유무를 확인한다.
+    # 키움증권 서버에 나의 포트롤리오 주식정보를(주식코드)를 등록하여, 서버가 실시간으로 변화를 책크하여
+    # 변화가 감지되면(즉,누군가가 거래를 하면), 즉시, 틱 정보를 클라이언트(자동매매프로그램)에 보내오고,
+    # 매매로직에 근거하여 매수 / 매도를 결정한다.
     def realdata_slot(self, sCode, sRealType, sRealData):
+        # 장 시작유무를 확인한다.
         if sRealType == '장시시작시간':
             fid = self.realType.REALTYPE[sRealType]['장운영구분']
             value = self.dynamicCall('GetCommRealData(QString, int)', sCode, fid)
@@ -424,28 +428,30 @@ class Kiwoom(QAxWidget):
                 self.calculator_fnc()
                 sys.exit()
 
+        # 키움서버에서 매매==거래(타인들..)가 발생하여       
+        # 키움서버에서 보내온 틱정보를 근거로 필요한 기초 정보를 축출한다.
         elif sRealType == '주식체결':
-            a = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['체결시간'])
-            b = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['현재가'])
+            a = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['체결시간']) # HHMMSS
+            b = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['현재가'])   # +(-) 2500
             b = abs(int(b))
-            c = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['전일대비'])
+            c = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['전일대비']) # 출력 : +(-)50
             c = abs(int(c))
-            d = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['등락율'])
+            d = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['등락율']) # 출력 : +(-)12.23
             d = float(d)
             e = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['(최우선)매도호가'])
             e = abs(int(e))
             f = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['(최우선)매수호가'])
-            f = abs(int(e))
-            g = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['거래량'])
+            f = abs(int(f))
+            g = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['거래량']) # (틱봉에 있는 거래량) == 왜냐하면 틱데이타 변화를 반영하는거니까
             g = abs(int(g))
-            h = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['누적거래량'])
-            h = abs(int(g))
-            i = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['고가'])
-            i = abs(int(g))
+            h = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['누적거래량']) # 합계 거래량
+            h = abs(int(h))
+            i = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['고가']) # 오늘 고가
+            i = abs(int(i))
             j = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['시가'])
-            j = abs(int(g))
+            j = abs(int(j))
             k = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['저가'])
-            k = abs(int(g))
+            k = abs(int(k))
 
             if sCode not in self.portfolio_stock_dict:
                 self.portfolio_stock_dict.update({sCode:{}})
@@ -460,14 +466,15 @@ class Kiwoom(QAxWidget):
             self.portfolio_stock_dict[sCode].update({'고가': i})
             self.portfolio_stock_dict[sCode].update({'시가': j})
             self.portfolio_stock_dict[sCode].update({'저가': k})
-            print(self.portfolio_stock_dict[sCode])
+            # print(self.portfolio_stock_dict[sCode])
 
-            # 계좌잔고평가내역에 있고 오늘 산 잔고에는 없을 경우
+
+            # 신규매도 / 신규매수를 결정하는 즉, 매수 할거냐 매도 할거냐를 결정하고 주문을 낸다.
+            # 계좌잔고평가내역에 있고 오늘 산 잔고에는 없을 경우 ==== 
             if sCode in self.account_stock_dict.keys() and sCode not in self.jango_dict.keys():
-                print('%s %s' % ('신규매도를 한다'),sCode)
                 asd = self.account_stock_dict[sCode]
                 meme_rate = (b -asd['매입가']) / asd['매입가'] * 100
-                if asd['매입가능수량'] > 0 and (meme_rate > 5 or meme_rate < -5):
+                if asd['매매가능수량'] > 0 and (meme_rate > 5 or meme_rate < -5):
                     order_success = self.dynamicCall('SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
                                     ['신규매도', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 2,
                                     sCode, asd['매매가능수량'], 0, self.realType.SENDTYPE['거래구분']['시장가'], ''])
@@ -567,6 +574,8 @@ class Kiwoom(QAxWidget):
                 chegual_quantity = int(chegual_quantity)
 
             current_price = self.dynamicCall('GetChejanData(int)', self.realType.REALTYPE['주문체결']['현재가'])
+            if current_price == "":
+               current_price = "0"  # 기본값 설정
             current_price = abs(int(current_price))
 
             first_sell_price = self.dynamicCall('GetChejanData(int)', self.realType.REALTYPE['주문체결']['(최우선)매도호가'])
