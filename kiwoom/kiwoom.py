@@ -5,6 +5,8 @@ from PyQt5.QtCore import *
 from PyQt5.QtTest import *
 from config.errorCode import *
 from config.kiwoomType import *
+import requests
+from bs4 import BeautifulSoup # type: ignore
 
 class Kiwoom(QAxWidget):
     def __init__(self):
@@ -63,6 +65,7 @@ class Kiwoom(QAxWidget):
         self.get_condition_name_list()
         self.send_condition(self.screen_real_stock, self.condition_name, self.condition_index, 1)
 
+        self.get_codes()
         self.screen_number_setting() # 스크린 번호를 할당
         self.dynamicCall('SetRealReg(QString, QString, QString, QString)',self.screen_start_stop_real, '', self.realType.REALTYPE['장시작시간']['장운영구분'], '0')
         for code in self.portfolio_stock_dict.keys():
@@ -709,3 +712,58 @@ class Kiwoom(QAxWidget):
     def file_delete(self):
         if os.path.isfile('files/condition_stock.txt'):
             os.remove('files/condition_stock.txt')
+    def codes(self):
+        COST = 100  # 최소 단가
+        VOLUME = 300000  # 최소 거래량
+        results = []
+        codes = []
+
+        for chk in [0, 1]:  # 0은 코스피, 1은 코스닥
+            url = f'https://finance.naver.com/sise/sise_rise.naver?sosok={chk}'
+            response = requests.get(url)
+            if response.status_code == 200:
+                html = response.text
+                soup = BeautifulSoup(html, 'html.parser')
+                trs = soup.select('table.type_2 tr')
+                del trs[0:2]  # 제목 행 제거
+                
+                for tr in trs:
+                    record = []
+                    tds = tr.find_all('td')
+                    for td in tds:
+                        if td.select('a[href]'):
+                            code = td.find('a').get('href').split('=')[-1].strip().replace(',', '')
+                            name = td.get_text().strip().replace(',', '')
+                            
+                            record.append(code)  # 주식 코드
+                            if name == '':
+                                name = '없다'
+                            record.append(name)  # 업체명
+                        else:
+                            data = td.get_text().strip().replace(',', '')
+                            if data.isdigit():
+                                record.append(int(data))
+                            else:
+                                record.append(data)
+                    if len(record) >= 7 and record[3] >= COST and record[6] >= VOLUME:
+                        grade = record[5].replace('+','').replace('%','')
+                        # 저장은 하고 있지만 코드만 사용 나중에 사용에 대한 고려
+                        results.append({'code':record[1],'name':record[2],'price':record[3],'grade':float(grade),'volume':record[6],'stock': chk})  # 업체명과 시장 구분(0 또는 1) 추가
+                        # print(f"{row['code']} {row['name']} {row['price']} {row['grade']} {row['volume']} {row['stock']}")
+                        # codes.append(record[1])
+
+                        
+
+            else:
+                print("Failed to retrieve data:", response.status_code)
+        results.sort(key=lambda x: x['grade'], reverse=True)
+        # 상위 10개 요소의 'code' 값만을 포함하는 새로운 리스트 생성
+        codes = [result['code'] for result in results[:9]]
+        return codes
+    
+    def get_codes(self):
+         for code in self.codes():
+            if code in self.portfolio_stock_dict.keys():
+                pass
+            else:
+                self.portfolio_stock_dict.update({code:{}})
