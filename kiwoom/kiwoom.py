@@ -26,6 +26,7 @@ class Kiwoom(QAxWidget):
         # 로거 생성
         self.logging = logging.getLogger(__name__)
 
+
         self.realType = RealType()
         ######## 이벤트루프 모음
         self.login_event_loop = QEventLoop()
@@ -486,142 +487,71 @@ class Kiwoom(QAxWidget):
             cnt += 1
 
         # print(self.portfolio_stock_dict)
+    # 파일삭제
+    def file_delete(self):
+        if os.path.isfile('files/condition_stock.txt'):
+            os.remove('files/condition_stock.txt')
+            
+    #송수신 메세지 get
+    def msg_slot(self, sScrNo, sRQName, sTrCode, msg):
+        self.logging.info(f'스크린: {sScrNo}, 요청이름: {sRQName}, tr코드: {sTrCode} --- {msg}')
+ 
 
-    # 장 시작유무를 확인한다.
-    # 키움증권 서버에 나의 포트롤리오 주식정보를(주식코드)를 등록하여, 서버가 실시간으로 변화를 책크하여
-    # 변화가 감지되면(즉,누군가가 거래를 하면), 즉시, 틱 정보를 클라이언트(자동매매프로그램)에 보내오고,
-    # 매매로직에 근거하여 매수 / 매도를 결정한다.
-    def realdata_slot(self, sCode, sRealType, sRealData):
-        # 장 시작유무를 확인한다.
-        if sRealType == '장시시작시간':
-            fid = self.realType.REALTYPE[sRealType]['장운영구분']
-            value = self.dynamicCall('GetCommRealData(QString, int)', sCode, fid)
-            if value == '0':
-                print('장 시작 전')
-            elif value == '3':
-                print('장 시작')
-            elif value == '2':
-                print('장 종료, 동시호가로 넘어감')
-            elif value == '4':
-                print('3시30분 장 종료')
-                for code in self.portfolio_stock_dict.keys():
-                    self.dynamicCall(
-                        'SetRealRemove(QString, QString)', self.portfolio_stock_dict[code]['스크린번호'], code
-                    )
-                    QTest.qWait(5000)
-                self.file_delete()
-                self.calculator_fnc()
-                sys.exit()
+    def codes(self):
+        COST = 100  # 최소 단가
+        VOLUME = 300000  # 최소 거래량
+        results = []
+        codes = []
 
-        # 키움서버에서 매매==거래(타인들..)가 발생하여       
-        # 키움서버에서 보내온 틱정보를 근거로 필요한 기초 정보를 축출한다.
-        elif sRealType == '주식체결':
-            a = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['체결시간']) # HHMMSS
-            b = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['현재가'])   # +(-) 2500
-            b = abs(int(b))
-            c = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['전일대비']) # 출력 : +(-)50
-            c = abs(int(c))
-            d = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['등락율']) # 출력 : +(-)12.23
-            d = float(d)
-            e = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['(최우선)매도호가'])
-            e = abs(int(e))
-            f = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['(최우선)매수호가'])
-            f = abs(int(f))
-            g = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['거래량']) # (틱봉에 있는 거래량) == 왜냐하면 틱데이타 변화를 반영하는거니까
-            g = abs(int(g))
-            h = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['누적거래량']) # 합계 거래량
-            h = abs(int(h))
-            i = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['고가']) # 오늘 고가
-            i = abs(int(i))
-            j = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['시가'])
-            j = abs(int(j))
-            k = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['저가'])
-            k = abs(int(k))
+        for chk in [0, 1]:  # 0은 코스피, 1은 코스닥
+            url = f'https://finance.naver.com/sise/sise_rise.naver?sosok={chk}'
+            response = requests.get(url)
+            if response.status_code == 200:
+                html = response.text
+                soup = BeautifulSoup(html, 'html.parser')
+                trs = soup.select('table.type_2 tr')
+                del trs[0:2]  # 제목 행 제거
+                
+                for tr in trs:
+                    record = []
+                    tds = tr.find_all('td')
+                    for td in tds:
+                        if td.select('a[href]'):
+                            code = td.find('a').get('href').split('=')[-1].strip().replace(',', '')
+                            name = td.get_text().strip().replace(',', '')
+                            
+                            record.append(code)  # 주식 코드
+                            if name == '':
+                                name = '없다'
+                            record.append(name)  # 업체명
+                        else:
+                            data = td.get_text().strip().replace(',', '')
+                            if data.isdigit():
+                                record.append(int(data))
+                            else:
+                                record.append(data)
+                    if len(record) >= 7 and record[3] >= COST and record[6] >= VOLUME:
+                        grade = record[5].replace('+','').replace('%','')
+                        # 저장은 하고 있지만 코드만 사용 나중에 사용에 대한 고려
+                        results.append({'code':record[1],'name':record[2],'price':record[3],'grade':float(grade),'volume':record[6],'stock': chk})  # 업체명과 시장 구분(0 또는 1) 추가
+                        # print(f"{row['code']} {row['name']} {row['price']} {row['grade']} {row['volume']} {row['stock']}")
+                        # codes.append(record[1])
 
-            if sCode not in self.portfolio_stock_dict:
-                self.portfolio_stock_dict.update({sCode:{}})
-            self.portfolio_stock_dict[sCode].update({'체결시간': a})
-            self.portfolio_stock_dict[sCode].update({'현재가': b})
-            self.portfolio_stock_dict[sCode].update({'전일대비': c})
-            self.portfolio_stock_dict[sCode].update({'등락율': d})
-            self.portfolio_stock_dict[sCode].update({'(최우선)매도호가': e})
-            self.portfolio_stock_dict[sCode].update({'(최우선)매수호가': f})
-            self.portfolio_stock_dict[sCode].update({'거래량': g})
-            self.portfolio_stock_dict[sCode].update({'누적거래량': h})
-            self.portfolio_stock_dict[sCode].update({'고가': i})
-            self.portfolio_stock_dict[sCode].update({'시가': j})
-            self.portfolio_stock_dict[sCode].update({'저가': k})
-            # print(self.portfolio_stock_dict[sCode])
+                        
 
-
-            # 신규매도 / 신규매수를 결정하는 즉, 매수 할거냐 매도 할거냐를 결정하고 주문을 낸다.
-            # 계좌잔고평가내역에 있고 오늘 산 잔고에는 없을 경우 ==== 
-            if sCode in self.account_stock_dict.keys() and sCode not in self.jango_dict.keys():
-                asd = self.account_stock_dict[sCode]
-                meme_rate = (b -asd['매입가']) / asd['매입가'] * 100
-                if asd['매매가능수량'] > 0 and (meme_rate > 5 or meme_rate < -5):
-                    order_success = self.dynamicCall('SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
-                                    ['신규매도', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 2,
-                                    sCode, asd['보유수량'], 0, self.realType.SENDTYPE['거래구분']['시장가'],''])
-                    if order_success == 0:
-                        print('매도주문 전달 성공')
-                        del self.account_stock_dict[sCode]
-                    else:
-                        print('매도주문 전달 실패')
-
-                # 오늘 산 잔고에 있을 경우
-            elif sCode in self.jango_dict.keys():
-                jd = self.jango_dict[sCode]
-                meme_rate = (b - jd['매입단가']) / jd['매입단가'] * 100
-                if jd['주문가능수량'] > 0 and (meme_rate > 5 or meme_rate < -5):
-                    order_success = self.dynamicCall(
-                        'SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
-                        ['신규매도',self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 2, sCode, jd['보유수량'],
-                         0, self.realType.SENDTYPE['거래구분']['시장가'],'']
-                    )   
-                    if order_success == 0:
-                        self.logging.debug('매도주문 전달 성공')     
-                    else:
-                        self.logging.debug('매도주문 전달 실패')     
-
-
-            # 등락율이 2.0% 이상이고 오늘 산 잔고액에 없을 경우
-            elif d > 2.0 and e > 0:
-                result = (self.use_money * 0.1) / e
-                quantity = int(result)
-                order_success = self.dynamicCall(
-                    'SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
-                    ['신규매수', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 1, sCode, quantity, e, self.realType.SENDTYPE['거래구분']['지정가'], '']
-                )
-                if order_success == 0:
-                    self.logging.debug('매수주문 전달 성공')
-                else:
-                    self.logging.debug('매수주문 전달 실패')
-
-
-            not_meme_list = list(self.not_account_stock_dict.keys())
-            for order_num in not_meme_list:
-                code = self.not_account_stock_dict[order_num]['종목코드']
-                meme_price = self.not_account_stock_dict[order_num]['주문가격']
-                not_quantity = self.not_account_stock_dict[order_num]['미체결수량']
-                # order_gubun = self.not_account_stock_dict[order_num]['주문구분']
-                order_gubun = '신규매수'
-
-                if order_gubun == '신규매수' and not_quantity > 0 and e > meme_price:
-                    order_success = self.dynamicCall(
-                        'SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
-                        ['매수취소', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 3, code, 0, 0,
-                         self.realType.SENDTYPE['거래구분']['지정가'], order_num]
-                    )
-                    if order_success == 0:
-                        self.logging.debug('매수취소 전달 성공')
-                    else:
-                        self.logging.debug('매수취소 전달 실패')
-
-                elif not_quantity == 0:
-                    del self.not_account_stock_dict[order_num]
-      
-
+            else:
+                print("Failed to retrieve data:", response.status_code)
+        results.sort(key=lambda x: x['grade'], reverse=True)
+        # 상위 10개 요소의 'code' 값만을 포함하는 새로운 리스트 생성
+        codes = [result['code'] for result in results[:10]]
+        return codes
+    
+    def get_codes(self):
+         for code in self.codes():
+            if code in self.portfolio_stock_dict.keys():
+                pass
+            else:
+                self.portfolio_stock_dict.update({code:{}})
 
     def chejan_slot(self, sGubun, nItemCnt, sFIdList):
         if int(sGubun) == 0:
@@ -741,68 +671,136 @@ class Kiwoom(QAxWidget):
 
                 
 
-    # 파일삭제
-    def file_delete(self):
-        if os.path.isfile('files/condition_stock.txt'):
-            os.remove('files/condition_stock.txt')
-            
-    #송수신 메세지 get
-    def msg_slot(self, sScrNo, sRQName, sTrCode, msg):
-        self.logging.info(f'스크린: {sScrNo}, 요청이름: {sRQName}, tr코드: {sTrCode} --- {msg}')
- 
-
-    def codes(self):
-        COST = 100  # 최소 단가
-        VOLUME = 300000  # 최소 거래량
-        results = []
-        codes = []
-
-        for chk in [0, 1]:  # 0은 코스피, 1은 코스닥
-            url = f'https://finance.naver.com/sise/sise_rise.naver?sosok={chk}'
-            response = requests.get(url)
-            if response.status_code == 200:
-                html = response.text
-                soup = BeautifulSoup(html, 'html.parser')
-                trs = soup.select('table.type_2 tr')
-                del trs[0:2]  # 제목 행 제거
-                
-                for tr in trs:
-                    record = []
-                    tds = tr.find_all('td')
-                    for td in tds:
-                        if td.select('a[href]'):
-                            code = td.find('a').get('href').split('=')[-1].strip().replace(',', '')
-                            name = td.get_text().strip().replace(',', '')
-                            
-                            record.append(code)  # 주식 코드
-                            if name == '':
-                                name = '없다'
-                            record.append(name)  # 업체명
-                        else:
-                            data = td.get_text().strip().replace(',', '')
-                            if data.isdigit():
-                                record.append(int(data))
-                            else:
-                                record.append(data)
-                    if len(record) >= 7 and record[3] >= COST and record[6] >= VOLUME:
-                        grade = record[5].replace('+','').replace('%','')
-                        # 저장은 하고 있지만 코드만 사용 나중에 사용에 대한 고려
-                        results.append({'code':record[1],'name':record[2],'price':record[3],'grade':float(grade),'volume':record[6],'stock': chk})  # 업체명과 시장 구분(0 또는 1) 추가
-                        # print(f"{row['code']} {row['name']} {row['price']} {row['grade']} {row['volume']} {row['stock']}")
-                        # codes.append(record[1])
-
-                        
-
-            else:
-                print("Failed to retrieve data:", response.status_code)
-        results.sort(key=lambda x: x['grade'], reverse=True)
-        # 상위 10개 요소의 'code' 값만을 포함하는 새로운 리스트 생성
-        codes = [result['code'] for result in results[:10]]
-        return codes
     
-    def get_codes(self):
-         for code in self.codes():
-            if code in self.portfolio_stock_dict.keys():
-                pass
-            else:
-                self.portfolio_stock_dict.update({code:{}})
+    # 장 시작유무를 확인한다.
+    # 키움증권 서버에 나의 포트롤리오 주식정보를(주식코드)를 등록하여, 서버가 실시간으로 변화를 책크하여
+    # 변화가 감지되면(즉,누군가가 거래를 하면), 즉시, 틱 정보를 클라이언트(자동매매프로그램)에 보내오고,
+    # 매매로직에 근거하여 매수 / 매도를 결정한다.
+    def realdata_slot(self, sCode, sRealType, sRealData):
+        # 장 시작유무를 확인한다.
+        if sRealType == '장시시작시간':
+            fid = self.realType.REALTYPE[sRealType]['장운영구분']
+            value = self.dynamicCall('GetCommRealData(QString, int)', sCode, fid)
+            if value == '0':
+                print('장 시작 전')
+            elif value == '3':
+                print('장 시작')
+            elif value == '2':
+                print('장 종료, 동시호가로 넘어감')
+            elif value == '4':
+                print('3시30분 장 종료')
+                for code in self.portfolio_stock_dict.keys():
+                    self.dynamicCall(
+                        'SetRealRemove(QString, QString)', self.portfolio_stock_dict[code]['스크린번호'], code
+                    )
+                    QTest.qWait(5000)
+                self.file_delete()
+                self.calculator_fnc()
+                sys.exit()
+
+        # 키움서버에서 매매==거래(타인들..)가 발생하여       
+        # 키움서버에서 보내온 틱정보를 근거로 필요한 기초 정보를 축출한다.
+        elif sRealType == '주식체결':
+            a = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['체결시간']) # HHMMSS
+            b = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['현재가'])   # +(-) 2500
+            b = abs(int(b))
+            c = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['전일대비']) # 출력 : +(-)50
+            c = abs(int(c))
+            d = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['등락율']) # 출력 : +(-)12.23
+            d = float(d)
+            e = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['(최우선)매도호가'])
+            e = abs(int(e))
+            f = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['(최우선)매수호가'])
+            f = abs(int(f))
+            g = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['거래량']) # (틱봉에 있는 거래량) == 왜냐하면 틱데이타 변화를 반영하는거니까
+            g = abs(int(g))
+            h = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['누적거래량']) # 합계 거래량
+            h = abs(int(h))
+            i = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['고가']) # 오늘 고가
+            i = abs(int(i))
+            j = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['시가'])
+            j = abs(int(j))
+            k = self.dynamicCall('GetCommRealData(QString, int)', sCode, self.realType.REALTYPE[sRealType]['저가'])
+            k = abs(int(k))
+
+            if sCode not in self.portfolio_stock_dict:
+                self.portfolio_stock_dict.update({sCode:{}})
+            self.portfolio_stock_dict[sCode].update({'체결시간': a})
+            self.portfolio_stock_dict[sCode].update({'현재가': b})
+            self.portfolio_stock_dict[sCode].update({'전일대비': c})
+            self.portfolio_stock_dict[sCode].update({'등락율': d})
+            self.portfolio_stock_dict[sCode].update({'(최우선)매도호가': e})
+            self.portfolio_stock_dict[sCode].update({'(최우선)매수호가': f})
+            self.portfolio_stock_dict[sCode].update({'거래량': g})
+            self.portfolio_stock_dict[sCode].update({'누적거래량': h})
+            self.portfolio_stock_dict[sCode].update({'고가': i})
+            self.portfolio_stock_dict[sCode].update({'시가': j})
+            self.portfolio_stock_dict[sCode].update({'저가': k})
+            # print(self.portfolio_stock_dict[sCode])
+
+
+            # 신규매도 / 신규매수를 결정하는 즉, 매수 할거냐 매도 할거냐를 결정하고 주문을 낸다.
+            # 계좌잔고평가내역에 있고 오늘 산 잔고에는 없을 경우 ==== 
+            if sCode in self.account_stock_dict.keys() and sCode not in self.jango_dict.keys():
+                asd = self.account_stock_dict[sCode]
+                meme_rate = (b -asd['매입가']) / asd['매입가'] * 100
+                if asd['매매가능수량'] > 0 and (meme_rate > 5 or meme_rate < -5):
+                    order_success = self.dynamicCall('SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
+                                    ['신규매도', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 2,
+                                    sCode, asd['보유수량'], 0, self.realType.SENDTYPE['거래구분']['시장가'],''])
+                    if order_success == 0:
+                        self.logging.info('매도주문 전달 성공')
+                        del self.account_stock_dict[sCode]
+                    else:
+                        self.logging.info('매도주문 전달 실패')
+
+                # 오늘 산 잔고에 있을 경우
+            elif sCode in self.jango_dict.keys():
+                jd = self.jango_dict[sCode]
+                meme_rate = (b - jd['매입단가']) / jd['매입단가'] * 100
+                if jd['주문가능수량'] > 0 and (meme_rate > 5 or meme_rate < -5):
+                    order_success = self.dynamicCall(
+                        'SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
+                        ['신규매도',self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 2, sCode, jd['보유수량'],
+                         0, self.realType.SENDTYPE['거래구분']['시장가'],'']
+                    )   
+                    if order_success == 0:
+                        self.logging.info('매도주문 전달 성공')     
+                    else:
+                        self.logging.info('매도주문 전달 실패')     
+
+            # 등락율이 2.0% 이상이고 오늘 산 잔고액에 없을 경우
+            elif e > 0 and ( d >= 1.0 and d <= 2 ) and code not in self.account_stock_dict.keys():
+                result = (self.use_money * 0.1) / e
+                quantity = int(result)
+                order_success = self.dynamicCall(
+                    'SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
+                    ['신규매수', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 1, sCode, quantity, e, self.realType.SENDTYPE['거래구분']['지정가'], '']
+                )
+                if order_success == 0:
+                    self.logging.info('매수주문 전달 성공')
+                else:
+                    self.logging.info('매수주문 전달 실패')
+
+
+            not_meme_list = list(self.not_account_stock_dict.keys())
+            for order_num in not_meme_list:
+                code = self.not_account_stock_dict[order_num]['종목코드']
+                meme_price = self.not_account_stock_dict[order_num]['주문가격']
+                not_quantity = self.not_account_stock_dict[order_num]['미체결수량']
+                # order_gubun = self.not_account_stock_dict[order_num]['주문구분']
+                order_gubun = '신규매수'
+
+                if order_gubun == '신규매수' and not_quantity > 0 and e > meme_price:
+                    order_success = self.dynamicCall(
+                        'SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
+                        ['매수취소', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 3, code, 0, 0,
+                         self.realType.SENDTYPE['거래구분']['지정가'], order_num]
+                    )
+                    if order_success == 0:
+                        self.logging.info('매수취소 전달 성공')
+                    else:
+                        self.logging.info('매수취소 전달 실패')
+
+                elif not_quantity == 0:
+                    del self.not_account_stock_dict[order_num]
