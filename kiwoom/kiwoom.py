@@ -32,18 +32,17 @@ class Kiwoom(QAxWidget):
         self.login_event_loop = QEventLoop()
         self.detail_account_info_event_loop = QEventLoop()
         self.calculator_event_loop = QEventLoop()
+        self.condition_event_loop = QEventLoop()
         ############################
 
         ########변수모음
-        self.condition_name = '스캘핑용'
-        self.logging.info(f'조건검색식은 {self.condition_name} 하나만 사용.')
-        self.condition_index = None
+        self.pw = '0000'
         self.account_codes = 0
         self.deposit = 0
         self.ok_deposit = 0
         self.total_buy_money_result = 0
         self.total_profit_loss_rate_result = 0
-
+        self.condition_list = None  # 조건식 목록 저장할 변수
         self.portfolio_stock_dict = {}
         self.account_num = None
         self.account_stock_dict = {}
@@ -77,14 +76,17 @@ class Kiwoom(QAxWidget):
         self.not_concluded_account() # 미체결 요청
         # self.calculator_fnc() # 종목 분석용, 임시용으로 실행
         # self.read_code() #  종목들 불러온다
-        
-        # 모드는 실행모드, 디버그모드로 나눔
-        # 아래 함수들(3개) 실행순서가 중용함 매우중요 그리고 디버그모드에서는 실행안됨
-        self.get_condition_load()
-        self.get_condition_name_list()
-        self.send_condition(self.screen_real_stock, self.condition_name, self.condition_index, 1)
+        condition_list = self.get_condition_list()
+        if condition_list:
+            print("조건식 목록:", condition_list)
+            # 조건검색식을 사용해 종목 조회 (예시: 두 번째 조건식 사용)
+            condition_index, condition_name = condition_list[1].split('^')
+            self.logging.info(condition_name,condition_index)
+            self.send_condition("0101", condition_name, int(condition_index), 1)  # 실시간 조회를 원하지 않으면 0, 실시간 조회를 원하면 1
+        else:
+            print("조건식이 없습니다. HTS에서 조건식을 등록했는지 확인하세요.")
 
-        self.get_codes()
+        # self.get_codes()
         self.screen_number_setting() # 스크린 번호를 할당
         w = []
         p = []
@@ -108,6 +110,52 @@ class Kiwoom(QAxWidget):
                     check = '포트'
                 self.logging.info('실시간 등록 코드[%s] :%s %s, 스크린번호: %s, fid번호: %s' % (check,code,code_nm, screen_num, fids))
 
+    def get_condition_list(self):
+        self.logging.info("조건식을 불러옵니다...")
+        ret = self.dynamicCall("GetConditionLoad()")
+        self.logging.info(f"GetConditionLoad() 호출 결과: {ret}")
+        self.condition_event_loop.exec_()  # 이벤트 대기
+        return self.condition_list  # 조건식 목록 반환
+
+    def _receive_condition_ver(self, ret, msg):
+        self.logging.info(f"_receive_condition_ver 호출됨: ret={ret}, msg={msg}")
+        if ret == 1:
+            conditions = self.dynamicCall("GetConditionNameList()")
+            self.condition_list = conditions.split(';')[:-1]  # 마지막 빈 값 제외
+            self.logging.info(f"받은 조건식 목록: {self.condition_list}")
+        else:
+            self.logging.info(f"조건식 리스트 가져오기 실패: {msg}")
+        self.condition_event_loop.exit()
+
+    def send_condition(self, screen_no, condition_name, condition_index, is_real_time):
+        self.logging.info(f"조건식 실행: {condition_name} (인덱스: {condition_index})")
+        self.dynamicCall("SendCondition(QString, QString, int, int)", screen_no, condition_name, condition_index, is_real_time)
+
+    def _receive_tr_condition(self, screen_no, code_list, condition_name, index, next):
+        codes = code_list.split(';')[:-1]  # 마지막이 빈 값이므로 제외
+        for code in codes:
+            if code not in self.portfolio_stock_dict.keys():
+                self.portfolio_stock_dict.update({code: {}})
+            screen_num = self.screen_real_stock
+            fids = self.realType.REALTYPE['주식체결']['체결시간']
+            code_nm = self.dynamicCall('GetMasterCodeName(QString)', code)
+            self.dynamicCall('SetRealReg(QString, QString, QString, QString)',screen_num, code, fids, '1')
+            if code != '':
+                    check = '검색'
+            self.logging.info('실시간 등록 코드[%s] :%s %s, 스크린번호: %s, fid번호: %s' % (check,code,code_nm, screen_num, fids))            
+        self.screen_number_setting() # 스크린 번호를 할당   
+
+    def _receive_real_condition(self, code, event_type, condition_name, condition_index):
+        code_nm = self.dynamicCall('GetMasterCodeName(QString)', code)
+        self.logging.info(f"실시간 조건 변경 - 종목코드: {code} {code_nm}, 이벤트 타입: {event_type}, 조건명: {condition_name}, 인덱스: {condition_index}")           
+        if code in self.portfolio_stock_dict.keys():
+            if event_type == 'D':
+                del self.portfolio_stock_dict[code]
+        else:
+             if event_type == 'I':
+                 self.portfolio_stock_dict.update({code:{}})
+        self.screen_number_setting()
+
     def get_ocx_instance(self):
         self.setControl("KHOPENAPI.KHOpenAPICtrl.1")    
 
@@ -119,53 +167,12 @@ class Kiwoom(QAxWidget):
     def real_event_slots(self):
         self.OnReceiveRealData.connect(self.realdata_slot)
         self.OnReceiveChejanData.connect(self.chejan_slot)
-
-    def condition_slots(self):
-        self.OnReceiveConditionVer.connect(self.condition_load_slot)
-        self.OnReceiveRealCondition.connect(self.real_condition_slot)
-
-    def condition_load_slot(self, ret, msg):
-        self.logging.info("handler condition load", ret, msg)
-
-    def real_condition_slot(self, code, type, cond_name, cond_index):
-        print(cond_name, code, type) 
-        if cond_name == self.condition_name:
-            if type.strip() == 'I':
-                if code in self.portfolio_stock_dict.keys():
-                    pass
-                else:
-                    self.portfolio_stock_dict.update({code:{}})
-                    self.logging.info(f'{self.condition_name}이 실행되어 가져온 {code} 입니다.')
-                    self.logging.info(f'portfolio_stock_dict에 등록됩니다.')
-            elif type.strip() == 'D':
-                if code in self.portfolio_stock_dict.keys():
-                    self.portfolio_stock_dict.pop(code)
-                    self.logging.info(f'portfolio_stock_dict에서 삭제됩니다.')
-
-
-    def get_condition_load(self):
-        self.dynamicCall("GetConditionLoad()")
-
-    def get_condition_name_list(self):
-        data = self.dynamicCall("GetConditionNameList()")
-        conditions = data.split(";")[:-1]
-        for condition in conditions:
-            index, name = condition.split('^')
-            if name == self.condition_name:
-                self.condition_index = index
-                # print('%s %s' % (name,index))
-                break
-
-    def send_condition(self, screen, cond_name, cond_index, search):
-        # ("100", "test", "000", 1) === (스크린번호, 컨디션이름, 컨디션인덱스, 탐색)
-        ret = self.dynamicCall("SendCondition(QString, QString, int, int)", screen, cond_name, cond_index, search)
-
-    def send_condition_stop(self, screen, cond_name, cond_index):
-        ret = self.dynamicCall("SendConditionStop(QString, QString, int)", screen, cond_name, cond_index)
-
+        self.OnReceiveTrCondition.connect(self._receive_tr_condition)
+        self.OnReceiveConditionVer.connect(self._receive_condition_ver)
+        self.OnReceiveRealCondition.connect(self._receive_real_condition)
 
     def login_slot(self, errCode):
-        print(errors(errCode))
+        self.logging.info(errors(errCode))
         self.login_event_loop.exit()
 
     def signal_login_commConnect(self):
@@ -180,16 +187,15 @@ class Kiwoom(QAxWidget):
 
     def detail_account_info(self):
         self.dynamicCall('SetInputValue(QString,QString)','계좌번호',self.account_num)
-        self.dynamicCall('SetInputValue(QString,QString)','비밀번호','0000')
+        self.dynamicCall('SetInputValue(QString,QString)','비밀번호',self.pw)
         self.dynamicCall('SetInputValue(QString,QString)','비밀번호입력매체구분','00')
         self.dynamicCall('SetInputValue(QString,QString)','조회구분','2')
         self.dynamicCall('CommRqData(String,String,int,String)','예수금상세현황요청','opw00001','0',self.screen_my_info)
         self.detail_account_info_event_loop.exec_()
     
     def detail_account_mystock(self, sPrevNext='0'):
-
         self.dynamicCall('SetInputValue(QString,QString)','계좌번호',self.account_num)
-        self.dynamicCall('SetInputValue(QString,QString)','비밀번호','0000')
+        self.dynamicCall('SetInputValue(QString,QString)','비밀번호',self.pw)
         self.dynamicCall('SetInputValue(QString,QString)','비밀번호입력매체구분','00')
         self.dynamicCall('SetInputValue(QString,QString)','조회구분','2')
         self.dynamicCall('CommRqData(QString,QString,int,QString)','계좌평가잔고내역요청','opw00018',sPrevNext,self.screen_my_info)
@@ -415,10 +421,10 @@ class Kiwoom(QAxWidget):
 
     def calculator_fnc(self):
         code_list = self.get_code_list_by_market('10') # 10은 코스닥, 0은 코스피
-        print('코스닥 갯수 %s' % len(code_list))
+        self.logging.info('코스닥 갯수 %s' % len(code_list))
         for idx, code in enumerate(code_list):
             self.dynamicCall('DisconnectRealData(QString)', self.screen_calculation_stock)
-            print('%s / %s :KOSDAQ Stock Code : %s is updating... ' % (idx+1, len(code_list), code))
+            self.logging.info('%s / %s :KOSDAQ Stock Code : %s is updating... ' % (idx+1, len(code_list), code))
             self.day_kiwoom_db(code=code)
 
     def day_kiwoom_db(self, code=None, date=None, sPrevNext='0'):
@@ -443,7 +449,7 @@ class Kiwoom(QAxWidget):
                     stock_price = abs(stock_price)
                     self.portfolio_stock_dict.update({stock_code:{'종목명':stock_name,'현재가':stock_price}})
             f.close()
-            print(self.portfolio_stock_dict)
+            self.logging.info(self.portfolio_stock_dict)
 
 
  
@@ -540,7 +546,7 @@ class Kiwoom(QAxWidget):
                         
 
             else:
-                print("Failed to retrieve data:", response.status_code)
+                self.logging.info("Failed to retrieve data:", response.status_code)
         results.sort(key=lambda x: x['grade'], reverse=True)
         # 상위 10개 요소의 'code' 값만을 포함하는 새로운 리스트 생성
         codes = [result['code'] for result in results[:10]]
@@ -669,6 +675,10 @@ class Kiwoom(QAxWidget):
                 del self.jango_dict[sCode]
                 self.dynamicCall('SetRealRemove(QString, QString)', self.portfolio_stock_dict[sCode]['스크린번호'], sCode)
 
+            self.detail_account_info() # 예수금 가져오기
+            self.detail_account_mystock() # 계좌평가잔고내역
+            self.not_concluded_account() # 미체결 요청
+            self.screen_number_setting() # 스크린 번호를 할당
                 
 
     
@@ -682,13 +692,13 @@ class Kiwoom(QAxWidget):
             fid = self.realType.REALTYPE[sRealType]['장운영구분']
             value = self.dynamicCall('GetCommRealData(QString, int)', sCode, fid)
             if value == '0':
-                print('장 시작 전')
+                self.logging.info('장 시작 전')
             elif value == '3':
-                print('장 시작')
+                self.logging.info('장 시작')
             elif value == '2':
-                print('장 종료, 동시호가로 넘어감')
+                self.logging.info('장 종료, 동시호가로 넘어감')
             elif value == '4':
-                print('3시30분 장 종료')
+                self.logging.info('3시30분 장 종료')
                 for code in self.portfolio_stock_dict.keys():
                     self.dynamicCall(
                         'SetRealRemove(QString, QString)', self.portfolio_stock_dict[code]['스크린번호'], code
@@ -738,21 +748,23 @@ class Kiwoom(QAxWidget):
             self.portfolio_stock_dict[sCode].update({'저가': k})
             # print(self.portfolio_stock_dict[sCode])
 
-
             # 신규매도 / 신규매수를 결정하는 즉, 매수 할거냐 매도 할거냐를 결정하고 주문을 낸다.
             # 계좌잔고평가내역에 있고 오늘 산 잔고에는 없을 경우 ==== 
+        
             if sCode in self.account_stock_dict.keys() and sCode not in self.jango_dict.keys():
                 asd = self.account_stock_dict[sCode]
-                meme_rate = (b -asd['매입가']) / asd['매입가'] * 100
+                meme_rate = (b - asd['매입가']) / asd['매입가'] * 100
+                
                 if asd['매매가능수량'] > 0 and (meme_rate > 5 or meme_rate < -5):
                     order_success = self.dynamicCall('SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
                                     ['신규매도', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 2,
                                     sCode, asd['보유수량'], 0, self.realType.SENDTYPE['거래구분']['시장가'],''])
+                    
                     if order_success == 0:
-                        self.logging.info('매도주문 전달 성공')
+                        self.logging.info(f"주문 성공: {sCode}, 매입가: {asd['매입가']}, 보유수량: {asd['보유수량']}, 수익률: {meme_rate}%")
                         del self.account_stock_dict[sCode]
                     else:
-                        self.logging.info('매도주문 전달 실패')
+                        self.logging.info(f"주문 실패: {sCode}, 오류 코드: {order_success}")
 
                 # 오늘 산 잔고에 있을 경우
             elif sCode in self.jango_dict.keys():
@@ -765,12 +777,12 @@ class Kiwoom(QAxWidget):
                          0, self.realType.SENDTYPE['거래구분']['시장가'],'']
                     )   
                     if order_success == 0:
-                        self.logging.info('매도주문 전달 성공')     
+                        self.logging.info(f"주문 성공: {sCode}, 보유수량: {jd['보유수량']}, 수익률: {meme_rate}%")
                     else:
-                        self.logging.info('매도주문 전달 실패')     
+                        self.logging.info(f"주문 실패: {sCode}, 오류 코드: {order_success}")
 
             # 등락율이 2.0% 이상이고 오늘 산 잔고액에 없을 경우
-            elif e > 0 and ( d >= 1.0 and d <= 2 ) and code not in self.account_stock_dict.keys():
+            elif e > 0 and (1.0 <= d <= 2.0) and sCode not in self.account_stock_dict.keys() and sCode in self.portfolio_stock_dict.keys():
                 result = (self.use_money * 0.1) / e
                 quantity = int(result)
                 order_success = self.dynamicCall(
@@ -792,6 +804,7 @@ class Kiwoom(QAxWidget):
                 order_gubun = '신규매수'
 
                 if order_gubun == '신규매수' and not_quantity > 0 and e > meme_price:
+                    
                     order_success = self.dynamicCall(
                         'SendOrder(QString, QString, QString, int, QString, int, int, QString, QString)',
                         ['매수취소', self.portfolio_stock_dict[sCode]['주문용스크린번호'], self.account_num, 3, code, 0, 0,
