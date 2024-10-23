@@ -11,6 +11,7 @@ class KiwoomAPI:
         self.condition_event_loop = QEventLoop()
 
         self.condition_list = None  # 조건식 목록 저장할 변수
+        self.data = []
 
         self.ocx.OnEventConnect.connect(self._event_connect)
 
@@ -20,7 +21,7 @@ class KiwoomAPI:
 
         self.ocx.OnReceiveTrData.connect(self._receive_tr_data)
         self.login()
-
+        self.ex()
     def login(self):
         self.ocx.dynamicCall("CommConnect()")
         self.login_event_loop.exec_()
@@ -57,10 +58,13 @@ class KiwoomAPI:
         codes = code_list.split(';')[:-1]  # 마지막이 빈 값이므로 제외
         for code in codes:
             print(f"종목코드: {code}")
+            self.data.append(code)
             self.get_stock_info(code)
 
     def _receive_real_condition(self, code, event_type, condition_name, condition_index):
         print(f"실시간 조건 변경 - 종목코드: {code}, 이벤트 타입: {event_type}, 조건명: {condition_name}, 인덱스: {condition_index}")
+        if event_type == 'I':
+            self.data.append(code)
 
     def get_stock_info(self, code):
         self.ocx.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
@@ -87,6 +91,5 @@ if __name__ == "__main__":
         kiwoom.send_condition("0101", condition_name, int(condition_index), 1)  # 실시간 조회를 원하지 않으면 0, 실시간 조회를 원하면 1
     else:
         print("조건식이 없습니다. HTS에서 조건식을 등록했는지 확인하세요.")
-
     # PyQt 이벤트 루프 실행
     kiwoom.app.exec_()
