@@ -21,7 +21,7 @@ class KiwoomAPI:
 
         self.ocx.OnReceiveTrData.connect(self._receive_tr_data)
         self.login()
-        self.ex()
+        
     def login(self):
         self.ocx.dynamicCall("CommConnect()")
         self.login_event_loop.exec_()
