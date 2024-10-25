@@ -5,8 +5,9 @@ import pandas as pd
 from loguru import logger
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QAxContainer import QAxWidget
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import *
 import logging
+import time
 
 class KiwoomAPI(QMainWindow):
     def __init__(self):
@@ -23,14 +24,18 @@ class KiwoomAPI(QMainWindow):
                             ])
 
         # 로거 생성
-        self.logging = logging.getLogger(__name__)        
+        self.logging = logging.getLogger(__name__)   
+
+        self.login_event_loop = QEventLoop()  
+        self.rq_event_loop = QEventLoop()
         self.balance = 0
         self.realtime_data_scrnum = 5000
         self.using_condition_name = "스캘핑용"
         self.realtime_registed_codes = []
         self.stock_dict = {}
-
+        self.order_compleate = False
         self.account_num = None
+        
 
         self.kiwoom = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
         self._set_signal_slots() # 키움증권 API와 내부 메소드를 연동
@@ -45,6 +50,7 @@ class KiwoomAPI(QMainWindow):
         self._set_input_value("비밀번호입력대체구분", "00")
         self._set_input_value("조회구분", "2")
         self._comm_rq_data("opw00018_req", "opw00018", 0, self._get_realtime_data_screen_num())
+        self.rq_event_loop.exec_()  # 이벤트 대기
 
     def get_account_info(self):
         account_nums = str(self.kiwoom.dynamicCall("GetLoginInfo(QString)", "ACCNO"))
@@ -67,10 +73,12 @@ class KiwoomAPI(QMainWindow):
 
     def _login(self):
         ret = self.kiwoom.dynamicCall("CommConnect()")
+        self.login_event_loop.exec_()
         if ret == 0:
             print("로그인 창 열기 성공!")
 
     def _event_connect(self, err_code):
+        self.login_event_loop.exit()
         if err_code == 0:
             self.logging.info("로그인 성공!")                
             self._after_login()
@@ -215,7 +223,6 @@ class KiwoomAPI(QMainWindow):
             self.stock_dict[sJongmokCode]["매입가"] = 현재가
             매입가 = self.stock_dict[sJongmokCode]["매입가"]
             보유량 = self.stock_dict[sJongmokCode]["보유수량"]
-
             매도수량 = 0
             매수수량 = 0
 
@@ -228,6 +235,8 @@ class KiwoomAPI(QMainWindow):
 
             매도수량 = self._sell_qty(수익률, 보유량)
             if 매도수량 > 0:
+                self.order_complete = False
+                self.order_event_loop = QEventLoop()  # 이벤트 루프 생성
                 self.logging.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
                 success = self.send_order(
                     "시장가매도주문", # 사용자 구분명
@@ -240,6 +249,12 @@ class KiwoomAPI(QMainWindow):
                     "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
                     "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
                 )
+                while not self.order_complete:
+                    self.order_event_loop.exec_()
+                    time.sleep(0.1)  # 잠시 대기하여 CPU 부하 방지
+
+                # 주문 완료 후 플래그와 루프 정리
+                self.order_event_loop = None
                 if success == 0:
                         self.logging.info(f"주문 성공: {sJongmokCode}, 보유수량: {매도수량}, 수익률: {수익률}")
                 else:
@@ -251,6 +266,8 @@ class KiwoomAPI(QMainWindow):
 
             매수수량 = self._buy_qty(self.balance, 현재가)
             if 매수수량 > 0:
+                self.order_complete = False
+                self.order_event_loop = QEventLoop()  # 이벤트 루프 생성
                 self.send_order(
                     "시장가매수주문", # 사용자 구분명
                     self._get_realtime_data_screen_num(), # 화면번호
@@ -262,6 +279,12 @@ class KiwoomAPI(QMainWindow):
                     "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
                     "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
                 )    
+                while not self.order_complete:
+                    self.order_event_loop.exec_()
+                    time.sleep(0.1)  # 잠시 대기하여 CPU 부하 방지
+
+                # 주문 완료 후 플래그와 루프 정리
+                self.order_event_loop = None                
                 if success == 0:
                         self.logging.info(f"주문 성공: {sJongmokCode}, 매수수량: {매수수량}")
                 else:
@@ -309,6 +332,9 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
 
+            self.order_complete = True
+            self.order_event_loop.quit()
+
         if sGubun == "1":
             self.logging.info("잔고통보")    
 
@@ -343,6 +369,7 @@ class KiwoomAPI(QMainWindow):
 
         for stock in self.stock_dict.keys():
             self.logging.info(self.stock_dict[stock])    
+        self.rq_event_loop.exit()  # 이벤트 종료
 
             
 if __name__ == "__main__":
