@@ -1,13 +1,17 @@
 import sys
 import os
+import datetime
 
 import pandas as pd
 from loguru import logger
+
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtCore import *
 import logging
 import time
+from collections import deque
+from queue import Queue
 
 class KiwoomAPI(QMainWindow):
     def __init__(self):
@@ -25,38 +29,144 @@ class KiwoomAPI(QMainWindow):
 
         # 로거 생성
         self.logging = logging.getLogger(__name__)   
-
-        self.login_event_loop = QEventLoop()  
-        self.rq_event_loop = QEventLoop()
+        self.tr_req_scrnum = 0
         self.balance = 0
+        self.now_time = datetime.datetime.now()
         self.realtime_data_scrnum = 5000
+        self.tr_reg_scrnum = 5150
+        self.max_send_per_sec = 4 # 초당 TR 호출 최대 4번
+        self.max_send_per_minute = 55 # 분당 TR 호출 최대 55번
+        self.max_send_per_hour = 958 # 시간당 TR 호출 최대 958번
+        self.last_tr_send_times = deque(maxlen=self.max_send_per_hour)
+        self.tr_req_queue = Queue()
         self.using_condition_name = "스캘핑용"
         self.realtime_registed_codes = []
         self.stock_dict = {}
+        self.unfinished_order_num_to_info_dict = {}
         self.order_compleate = False
         self.account_num = None
-        
 
         self.kiwoom = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
         self._set_signal_slots() # 키움증권 API와 내부 메소드를 연동
         self._login()
-        self.timer1 = QTimer()
-        self.timer1.timeout.connect(self.get_account_balance)
-        self.timer1.start(5000)  
 
-    def get_account_balance(self):
+        self.tr_req_check_timer = QTimer()
+
+        self.req_opt10019_timer = QTimer()
+        self.req_opt10019_timer.timeout.connect(self.get_tmp_high_volatility_info)
+        self.tr_req_check_timer.timeout.connect(self._send_tr_request)
+        self.tr_req_check_timer.start(100) # 0.1초마다 한번 Execute        
+
+        self.req_account_info_timer = QTimer()
+        self.req_account_info_timer.timeout.connect(self.get_account_info)
+        self.tr_req_check_timer.timeout.connect(self._send_tr_request)
+        self.tr_req_check_timer.start(100) # 0.1초마다 한번 Execute
+
+        self.req_unfinished_orders = QTimer()
+        self.req_unfinished_orders.timeout.connect(self.check_unfinished_orders)
+        self.tr_req_check_timer.timeout.connect(self._send_tr_request)
+        self.tr_req_check_timer.start(100) # 0.1초마다 한번 Execute
+    def _login(self):
+        ret = self.kiwoom.dynamicCall("CommConnect()")
+        if ret == 0:
+            print("로그인 창 열기 성공!")
+
+    def _event_connect(self, err_code):
+        if err_code == 0:
+            self.logging.info("로그인 성공!")                
+            self._after_login()
+        else:
+            raise Exception("로그인 실패!")
+        
+    def _after_login(self):
+        self.get_account_num()
+        self.req_account_info_timer.start(3000) # 0.2
+        self.req_opt10019_timer.start(3000)
+        self.req_unfinished_orders.start(200)
+        self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
+
+    def _send_tr_request(self):
+        self.now_time = datetime.datetime.now()
+        if self._is_check_tr_req_condition() and not self.tr_req_queue.empty():
+            request_func, *func_args = self.tr_req_queue.get()
+            logger.info(f"Executing TR request function: {request_func}")
+            request_func(*func_args) if func_args else request_func()
+            self.last_tr_send_times.append(self.now_time)
+
+    def check_unfinished_orders(self):
+        pop_list = []   
+        for order_num, stock_info_dict in self.unfinished_order_num_to_info_dict.items():
+            주문번호 = order_num
+            종목코드 = stock_info_dict["종목코드"]    
+            주문체결시간 = stock_info_dict["주문체결시간"] 
+            미체결수량 = stock_info_dict["미체결수량"] 
+            주문구분 = stock_info_dict["주문구분"] 
+            order_time = datetime.datetime.now().replace(
+                hour = int(주문체결시간[:-4]),
+                minute = int(주문체결시간[-4:-2]),
+                second = int(주문체결시간[-2:])
+            )
+            if 주문구분 == "매수" and datetime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
+                print(f"종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매수 취소 주문:")
+                self.send_order(
+                    "매수취소주문", # 사용자 구분명
+                    "5000", # 화면번호
+                    self.account_num, # 계좌번호
+                    3, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                    종목코드, # 종목코드
+                    미체결수량, #주문 수량
+                    "", # 주문 가격, 시장가 외 경우 공백
+                    "00", # 주문유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (코아스트디오 참소)
+                    주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+                )
+                pop_list.append(주문번호)
+            elif 주문구분 == "매도" and datatime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
+                print(f"종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매도 취소 주문!")
+                self.send_order(
+                    "매도취소주문", # 사용자 구분
+                    "5000", # 화면번호
+                    self.account_num, # 계좌 번호
+                    4, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                    종목코드, # 종목코드
+                    미체결수량, # 주문수량
+                    "", # 주문 가격, 시장가의 경우 공백
+                    "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (코아스트디오 참소)
+                    주문번호, # 주분번호 (정정 주문의 경우 사용, 나머진 공백)
+                )
+                pop_list.append(주문번호)
+            for order_num in pop_list:
+                self.unfinished_order_num_to_info_dict.pop(order_num)
+        
+    def request_opt10019(self, target_market="000", is_upside=True):
+        self._set_input_value("시장구분", target_market)
+        self._set_input_value("등락구분", "1" if is_upside else "2") # 급등기준
+        self._set_input_value("시간구분", "1") # 1분전
+        self._set_input_value("시간", "분") # 분
+        self._set_input_value("거래량구분", "00100") # 10만주이상
+        self._set_input_value("종목조건", "0") # 전체조건
+        self._set_input_value("신용조건", "0") # 전체조건
+        self._set_input_value("가격조건", "0") # 전체조건
+        self._set_input_value("상하한포함", "0") # 미포함
+        self._comm_rq_data("opt10019_req", "opt10019", 0, self._get_tr_req_screen_num())
+
+    def request_opw00018(self):
         self._set_input_value("계좌번호", self.account_num)
         self._set_input_value("비밀번호", "")
         self._set_input_value("비밀번호입력대체구분", "00")
         self._set_input_value("조회구분", "2")
         self._comm_rq_data("opw00018_req", "opw00018", 0, self._get_realtime_data_screen_num())
-        self.rq_event_loop.exec_()  # 이벤트 대기
 
-    def get_account_info(self):
-        account_nums = str(self.kiwoom.dynamicCall("GetLoginInfo(QString)", "ACCNO"))
+    def get_account_num(self):
+        account_nums = str(self.kiwoom.dynamicCall("GetLoginInfo(QString)", ["ACCNO"]).rstrip(';'))
         self.logging.info(f"계좌번호 리스트: {account_nums}")
         self.account_num = account_nums.split(';')[0]
         self.logging.info(f"사용 계좌 번호: {self.account_num}")
+
+    def get_tmp_high_volatility_info(self):
+        self.tr_req_queue.put([self.request_opt10019, "001", True]) 
+
+    def get_account_info(self):
+        self.tr_req_queue.put([self.request_opw00018])
 
     def _set_signal_slots(self):
         self.kiwoom.OnEventConnect.connect(self._event_connect)
@@ -71,25 +181,7 @@ class KiwoomAPI(QMainWindow):
         self.kiwoom.OnReceiveTrCondition.connect(self._receive_tr_condition)
 
 
-    def _login(self):
-        ret = self.kiwoom.dynamicCall("CommConnect()")
-        self.login_event_loop.exec_()
-        if ret == 0:
-            print("로그인 창 열기 성공!")
 
-    def _event_connect(self, err_code):
-        self.login_event_loop.exit()
-        if err_code == 0:
-            self.logging.info("로그인 성공!")                
-            self._after_login()
-        else:
-            raise Exception("로그인 실패!")
-        
-    def _after_login(self):
-        # print("실시간 등록 요청")   
-        self.get_account_info()
-        self.get_account_balance()
-        self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
 
     def send_order(self, sRQName, sScreenNo, sAccNo, nOrderType, sCode, nQty, nPrice, sHogaGb, sOrgOrderNo):
         self.logging.info("Sending order")
@@ -135,7 +227,12 @@ class KiwoomAPI(QMainWindow):
             self.logging.info(f"{code}, 실시간 등록 완료!")
             self.realtime_registed_codes.append(code)
 
+    def _get_tr_req_screen_num(self):
+        self.tr_req_scrnum += 1
+        if self.tr_req_scrnum > 5288:
+            self.tr_req_scrnum = 5150
 
+        return str(self.tr_req_scrnum)
     def _get_realtime_data_screen_num(self):
         self.realtime_data_scrnum += 1
         if self.realtime_data_scrnum > 5150:
@@ -328,6 +425,14 @@ class KiwoomAPI(QMainWindow):
             #     f"종목명: {종목명}, 주문수량: {주문수량}, 주문가격: {주문가격}, 체결수량: {체결수량}, 체결가격: {체결가격}, "
             #     f"단위체결량: {단위체결량}, 주문번호: {주문번호}, 원주문번호: {원주문번호}"
             # )
+            self.unfinished_order_num_to_info_dict[주문번호] = dict(
+                종목코드 = 종목코드,
+                미체결수량 = 미체결수량,
+                주문체결시간 = 주문체결시간,
+                주문구분 = 주문구분,
+            )
+            if 미체결수량 == 0:
+                self.unfinished_order_num_to_info_dict(주문번호)
             if 체결수량 > 0:
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
@@ -369,7 +474,24 @@ class KiwoomAPI(QMainWindow):
 
         for stock in self.stock_dict.keys():
             self.logging.info(self.stock_dict[stock])    
-        self.rq_event_loop.exit()  # 이벤트 종료
+
+    def _is_check_tr_req_condition(self):
+        self.now_time = datetime.datetime.now()            
+        if len(self.last_tr_send_times) >= self.max_send_per_sec and \
+            self.now_time - self.last_tr_send_times[-self.max_send_per_sec] < datetime.timedelta(microseconds=1000):
+            logger.info(f"초 단위 TR 요청 제한! Wait for time to send!")
+            return False
+        elif len(self.last_tr_send_times) >= self.max_send_per_minute and \
+                self.now_time - self.last_tr_send_times[-self.max_send_per_minute] < datetime.timedelta(minutes=1):
+            logger.info(f"분 단위 TR 요청 제한! Wait for time to send!")
+            return False
+        
+        elif len(self.last_tr_send_times) >= self.max_send_per_hour and \
+                self.now_time - self.last_tr_send_times[-self.max_send_per_hour] < datetime.timedelta(minutes=60):
+            logger.info(f"분 단위 TR 요청 제한! Wait for time to send!")
+            return False
+        else:
+            return True
 
             
 if __name__ == "__main__":
