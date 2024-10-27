@@ -263,8 +263,6 @@ class KiwoomAPI(QMainWindow):
 
             고가대비등락률 = (현재가 - 매입후고가) / 매입후고가 * 100
             if 고가대비등락률 <= self.stop_loss_threshold:
-                self.order_complete = False
-                self.order_event_loop = QEventLoop()  # 이벤트 루프 생성
                 logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
                 success = self.send_order(
                     "시장가매도주문", # 사용자 구분명
@@ -277,12 +275,6 @@ class KiwoomAPI(QMainWindow):
                     "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
                     "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
                 )
-                while not self.order_complete:
-                    self.order_event_loop.exec_()
-                    time.sleep(0.1)  # 잠시 대기하여 CPU 부하 방지
-
-                # 주문 완료 후 플래그와 루프 정리
-                self.order_event_loop = None
                 if success == 0:
                         logger.info(f"주문 성공: {sJongmokCode}, 보유수량: {매도수량}, 수익률: {등락률}")
                 else:
