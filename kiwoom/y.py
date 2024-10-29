@@ -88,7 +88,7 @@ class KiwoomAPI(QMainWindow):
 
     def _after_login(self):
         self.get_account_num()
-        self.req_account_info_timer.start(3000) 
+        self.req_account_info_timer.start(1500) 
         self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
         # self.req_upside_info_timer.start(3000)
         self.check_unfinished_orders_timer.start(250)
@@ -268,7 +268,6 @@ class KiwoomAPI(QMainWindow):
         if strType == "I":
             self.register_code_to_realtime_list(strCode)
             if self._buy_check() and strCode not in self.stock_dict.keys():
-               self.stock_dict.update({strCode:{}})
                self.send_order(
                 "시장가매수주문", # 사용자 구분명
                 self._get_realtime_data_screen_num(), # 화면번호
@@ -280,10 +279,7 @@ class KiwoomAPI(QMainWindow):
                 "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
                 "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
                 )  
-               self.stock_dict[strCode].update({"보유수량": 0})
-               self.stock_dict[strCode].update({"매입가": None})
-               self.stock_dict[strCode].update({"현재가": None})
-               self.stock_dict[strCode].update({"매입후고가": None})                
+             
         elif strType == "D" and strCode not in self.stock_dict.keys():
             self.unregister_code_to_realtime_list(strCode)
 
@@ -293,7 +289,6 @@ class KiwoomAPI(QMainWindow):
         for stock_code in strCodeList.split(';'):
             if len(stock_code) == 6 and stock_code not in self.stock_dict.keys():
                 self.register_code_to_realtime_list(stock_code) 
-                self.stock_dict.update({stock_code:{}})
                 if self._buy_check():
                     self.send_order(
                         "시장가매수주문", # 사용자 구분명
@@ -306,10 +301,7 @@ class KiwoomAPI(QMainWindow):
                         "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
                         "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
                     )  
-                    self.stock_dict[stock_code].update({"보유수량": 0})
-                    self.stock_dict[stock_code].update({"매입가": None})
-                    self.stock_dict[stock_code].update({"현재가": None})
-                    self.stock_dict[stock_code].update({"매입후고가": None})
+
 
     def set_real(self, scrNum, strCodeList, strFidList, strRealType):
         self.kiwoom.dynamicCall("SetRealReg(QString, QString, QString, QString)", scrNum, strCodeList, strFidList, strRealType)   
@@ -371,51 +363,52 @@ class KiwoomAPI(QMainWindow):
             등락률 = float(self._get_comn_realdata(sRealType, 12))     
             체결시간 = self._get_comn_realdata(sRealType, 20)
             # logger.info(f"종목코드: {sJongmokCode}, 체결시간: {체결시간}, 현재가: {현재가}, 등락률: {등락률}")
-            self.stock_dict[sJongmokCode]["현재가"] = 현재가
-            매입후고가 = self.stock_dict[sJongmokCode]["매입후고가"]
-            매입후고가 = max(현재가, 매입후고가) if 매입후고가 else 현재가
-            self.stock_dict[sJongmokCode]["매입후고가"] = 매입후고가
-            고가대비등락률 = (현재가 - 매입후고가) / 매입후고가 * 100
-            if 고가대비등락률 <= self.stop_loss_threshold:
-                logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
-                self.send_order(
-                    "시장가매도주문", # 사용자 구분명
-                    self._get_realtime_data_screen_num(), # 화면번호
-                    self.account_num, # 계좌번호
-                    2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                    sJongmokCode, # 종목코드
-                    self.stock_dict[sJongmokCode]["보유수량"], # 주문 수량
-                    "", # 주문 가격, 시장가의 경우 공백
-                    "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                    "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-                )
- 
-                     
-            매입가 = self.stock_dict[sJongmokCode]["매입가"]
-            보유량 = self.stock_dict[sJongmokCode]["보유수량"]
+            # self.stock_dict[sJongmokCode].update({"현재가": 현재가})
 
-            if 매입가 is None:
-                return
+            if sJongmokCode in self.stock_dict.keys():
+                self.stock_dict[sJongmokCode].update({"현재가": 현재가})
+                매입후고가 = self.stock_dict[sJongmokCode].get("매입후고가", 현재가)
+                매입후고가 = max(현재가, 매입후고가) if 매입후고가 else 현재가
+                self.stock_dict[sJongmokCode]["매입후고가"] = 매입후고가
+                고가대비등락률 = (현재가 - 매입후고가) / 매입후고가 * 100
+                if 고가대비등락률 <= self.stop_loss_threshold:
+                    logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
+                    self.send_order(
+                        "시장가매도주문", # 사용자 구분명
+                        self._get_realtime_data_screen_num(), # 화면번호
+                        self.account_num, # 계좌번호
+                        2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                        sJongmokCode, # 종목코드
+                        self.stock_dict[sJongmokCode].get("보유수량", 1) , # 주문 수량
+                        "", # 주문 가격, 시장가의 경우 공백
+                        "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+                    )
+                매입가 = self.stock_dict[sJongmokCode].get("매입가", None)
+                보유량 = self.stock_dict[sJongmokCode].get("보유량", None)
 
-            수익률 = (현재가- 매입가) / 매입가 * 100
+                if 매입가 is None:
+                    return
 
-            if 수익률 <= self.stop_loss_threshold:
-                logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
-                self.send_order(
-                    "시장가매도주문", # 사용자 구분명
-                    self._get_realtime_data_screen_num(), # 화면번호
-                    self.account_num, # 계좌번호
-                    2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                    sJongmokCode, # 종목코드
-                    self.stock_dict[sJongmokCode]["보유수량"], # 주문 수량
-                    "", # 주문 가격, 시장가의 경우 공백
-                    "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                    "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-                )
+                수익률 = (현재가- 매입가) / 매입가 * 100
 
-                보유량 = self.stock_dict[sJongmokCode]["보유수량"]
-                if 보유량 == 0:
-                    del self.stock_dict[sJongmokCode]
+                if 수익률 <= self.stop_loss_threshold:
+                    logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
+                    self.send_order(
+                        "시장가매도주문", # 사용자 구분명
+                        self._get_realtime_data_screen_num(), # 화면번호
+                        self.account_num, # 계좌번호
+                        2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                        sJongmokCode, # 종목코드
+                        self.stock_dict[sJongmokCode].get("보유수량", 1), # 주문 수량
+                        "", # 주문 가격, 시장가의 경우 공백
+                        "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+                    )
+
+                    보유량 = self.stock_dict[sJongmokCode]["보유수량"]
+                    if 보유량 == 0:
+                        del self.stock_dict[sJongmokCode]
 
 
 
@@ -467,9 +460,10 @@ class KiwoomAPI(QMainWindow):
                 del self.unfinished_order_num_to_info_dict[주문번호]
 
             if 체결수량 > 0:
-                if 종목코드 in self.stock_dict.keys():
-                    self.stock_dict[종목코드][ "보유수량"] = 체결수량
-                    self.stock_dict[종목코드][ "매입가"] = 체결가격
+                if 종목코드 not in self.stock_dict.keys():
+                    self.stock_dict.update({종목코드:{}})
+                self.stock_dict[종목코드][ "보유수량"] = 체결수량
+                self.stock_dict[종목코드][ "매입가"] = 체결가격
 
         if sGubun == "1":
             logger.info("잔고통보")    
