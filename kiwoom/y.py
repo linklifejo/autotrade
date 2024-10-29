@@ -137,6 +137,7 @@ class KiwoomAPI(QMainWindow):
             매입가 = int(self._comm_get_data(trcode, "", rqname, i, "매입가"))
             if 종목코드  not in self.stock_dict.keys():
                 self.stock_dict.update({종목코드:{}})
+                self.register_code_to_realtime_list(종목코드)
             self.stock_dict[종목코드].update({"보유수량": 보유수량})
             self.stock_dict[종목코드].update({"매입가": 매입가})
 
