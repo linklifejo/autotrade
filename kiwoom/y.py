@@ -52,6 +52,8 @@ class KiwoomAPI(QMainWindow):
         self._login()
 
     def _buy_check(self):
+        money = 0
+        buy_money = 0
         if self.data_cnt >= self.max_buy_cnt:
             return False
         
@@ -63,9 +65,10 @@ class KiwoomAPI(QMainWindow):
                 return False
             else:
                buy_money = self.balance * 0.5
-               buy_money = buy_money / 4
-               if buy_money >= money:
-                   return True
+               buy_money = int(buy_money / 4)
+        if buy_money >= money:
+            print(True)
+            return True
 
 
     def _login(self):
@@ -268,19 +271,9 @@ class KiwoomAPI(QMainWindow):
         logger.info(f"Received real condition, {strCode}, {strType}, {strConditionName}, {strConditionIndex}")
         if strType == "I":
             self.register_code_to_realtime_list(strCode)
-            if self._buy_check() and strCode not in self.stock_dict.keys():
-               self.send_order(
-                "시장가매수주문", # 사용자 구분명
-                self._get_realtime_data_screen_num(), # 화면번호
-                self.account_num, 
-                1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                strCode, # 종목코드
-                1, # 주문 수량
-                "", # 주문 가격, 시장가의 경우 공백
-                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
-                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-                )  
-             
+
+ 
+            
         elif strType == "D" and strCode not in self.stock_dict.keys():
             self.unregister_code_to_realtime_list(strCode)
 
@@ -288,21 +281,8 @@ class KiwoomAPI(QMainWindow):
         logger.info(f"Received TR Condition, strCodeList: {strCodeList}, strConditionName: {strConditionName}," 
               f"nIndex: {nIndex}, nNext: {nNext}, scrNum: {scrNum}")       
         for stock_code in strCodeList.split(';'):
-            if len(stock_code) == 6 and stock_code not in self.stock_dict.keys():
+            if len(stock_code) == 6:
                 self.register_code_to_realtime_list(stock_code) 
-                if self._buy_check():
-                    self.send_order(
-                        "시장가매수주문", # 사용자 구분명
-                        self._get_realtime_data_screen_num(), # 화면번호
-                        self.account_num, 
-                        1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                        stock_code, # 종목코드
-                        1, # 주문 수량
-                        "", # 주문 가격, 시장가의 경우 공백
-                        "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
-                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-                    )  
-
 
     def set_real(self, scrNum, strCodeList, strFidList, strRealType):
         self.kiwoom.dynamicCall("SetRealReg(QString, QString, QString, QString)", scrNum, strCodeList, strFidList, strRealType)   
@@ -410,6 +390,18 @@ class KiwoomAPI(QMainWindow):
                     보유량 = self.stock_dict[sJongmokCode]["보유수량"]
                     if 보유량 == 0:
                         del self.stock_dict[sJongmokCode]
+            else:
+                self.send_order(
+                "시장가매수주문", # 사용자 구분명
+                self._get_realtime_data_screen_num(), # 화면번호
+                self.account_num, 
+                1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                sJongmokCode, # 종목코드
+                1, # 주문 수량
+                "", # 주문 가격, 시장가의 경우 공백
+                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
+                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+                )                         
 
 
 
