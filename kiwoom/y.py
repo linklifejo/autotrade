@@ -209,7 +209,7 @@ class KiwoomAPI(QMainWindow):
                 logger.info(f"종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매수 취소 주문:")
                 self.send_order(
                     "매수취소주문", # 사용자 구분명
-                    self.stock_dict[종목코드]["화면번호"], # 화면번호
+                    "5000", # 화면번호
                     self.account_num, # 계좌번호
                     3, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
                     종목코드, # 종목코드
@@ -224,7 +224,7 @@ class KiwoomAPI(QMainWindow):
                 logger.info(f"종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매도 취소 주문!")
                 self.send_order(
                     "매도취소주문", # 사용자 구분
-                    self.stock_dict[종목코드]["화면번호"], # 화면번호
+                    "5000", # 화면번호
                     self.account_num, # 계좌 번호
                     4, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
                     종목코드, # 종목코드
@@ -234,8 +234,8 @@ class KiwoomAPI(QMainWindow):
                     주문번호, # 주분번호 (정정 주문의 경우 사용, 나머진 공백)
                 )
                 pop_list.append(주문번호)
-            for order_num in pop_list:
-                del self.unfinished_order_num_to_info_dict[order_num]
+        for order_num in pop_list:
+            self.unfinished_order_num_to_info_dict.pop(order_num)
         
     def _set_signal_slots(self):
         self.kiwoom.OnEventConnect.connect(self._event_connect)
@@ -309,7 +309,7 @@ class KiwoomAPI(QMainWindow):
             화면번호 = self.realtime_registed_codes[code]["화면번호"]
             self.set_real_remove(화면번호, code)
             logger.info(f"{code}, 실시간 해지(unregister) 완료!")
-            del self.realtime_registed_codes[code]            
+            self.realtime_registed_codes.pop(code)            
 
     def _get_tr_req_screen_num(self):
         self.tr_req_scrnum += 1
@@ -394,16 +394,17 @@ class KiwoomAPI(QMainWindow):
                     if 보유량 == 0:
                         del self.stock_dict[sJongmokCode]
             else:
-                if self._buy_check() != 0:
+                qty = self._buy_check(현재가)
+                if qty > 0:
                     self.send_order(
                     "시장가매수주문", # 사용자 구분명
                     self._get_realtime_data_screen_num(), # 화면번호
                     self.account_num, 
                     1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
                     sJongmokCode, # 종목코드
-                    1, # 주문 수량
-                    "", # 주문 가격, 시장가의 경우 공백
-                    "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
+                    qty, # 주문 수량
+                    현재가, # 주문 가격, 시장가의 경우 공백
+                    "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (KOAStudio 참조)
                     "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
                     )                         
 
@@ -454,7 +455,7 @@ class KiwoomAPI(QMainWindow):
             self.unfinished_order_num_to_info_dict[주문번호].update({"주문체결시간": 주문체결시간}) 
             self.unfinished_order_num_to_info_dict[주문번호].update({"주문구분": 주문구분}) 
             if 미체결수량 == 0:
-                del self.unfinished_order_num_to_info_dict[주문번호]
+                self.unfinished_order_num_to_info_dict.pop(주문번호)
 
             if 체결수량 > 0:
                 if 종목코드 not in self.stock_dict.keys():
