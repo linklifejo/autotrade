@@ -400,24 +400,6 @@ class KiwoomAPI(QMainWindow):
                     self.register_code_to_realtime_list('460930')
                     del self.stock_dict[sJongmokCode]
                     self.tr_req_queue.put([self.request_opw00018])
-            else:
-                qty = self._buy_check(현재가)
-                if qty > 0 :
-                    self.tr_req_queue.put(
-                        [
-                            self.send_order, 
-                            "시장가매수주문", # 사용자 구분명
-                            self._get_realtime_data_screen_num(), # 화면번호
-                            self.account_num, # 계좌번호
-                            1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                            sJongmokCode, # 종목코드
-                            qty, # 주문 수량
-                            현재가, # 주문 가격, 시장가의 경우 공백
-                            "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                            "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-
-                        ]
-                    ) 
 
         elif sRealType == "주식호가잔량":
             시간 = self._get_comn_realdata(sRealType, 21)
@@ -425,7 +407,23 @@ class KiwoomAPI(QMainWindow):
             매수호가1 = int(self._get_comn_realdata(sRealType, 51).replace('-', ''))
             매도호가잔량1 = int(self._get_comn_realdata(sRealType, 61).replace('-', ''))
             매수호가잔량1 = int(self._get_comn_realdata(sRealType, 71).replace('-', ''))
+            qty = self._buy_check(매수호가1)
+            if qty > 0 :
+                self.tr_req_queue.put(
+                    [
+                        self.send_order, 
+                        "지정가매수주문", # 사용자 구분명
+                        self._get_realtime_data_screen_num(), # 화면번호
+                        self.account_num, # 계좌번호
+                        1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                        sJongmokCode, # 종목코드
+                        qty, # 주문 수량
+                        매수호가1, # 주문 가격, 시장가의 경우 공백
+                        "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
 
+                    ]
+                )
             # print(
             #     f"종목코드: {sJongmokCode}, 시간: {시간}, 매도호가1: {매도호가1}, 매수호가1: {매수호가1}, "
             #     f"매도호가잔량1: {매도호가잔량1}, 매수호가잔량1: {매수호가잔량1}"
