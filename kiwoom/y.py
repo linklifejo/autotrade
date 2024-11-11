@@ -83,9 +83,8 @@ class KiwoomAPI(QMainWindow):
     def _after_login(self):
         self.get_account_num()
         self.tr_req_queue.put([self.request_opw00018])
-        self.register_code_to_realtime_list('460930')
         self.unfinished_orders.start(250) # 0.25초마다 한번 Execute   
-        # self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
+        self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
         self.tr_req_check_timer.start(1000) # 0.1초마다 한번 Execute    
         # self.req_upside_info_timer.start(3000)
         # self.check_unfinished_orders_timer.start(250)
@@ -215,17 +214,7 @@ class KiwoomAPI(QMainWindow):
 
                         ]
                         ) 
-                # self.send_order(
-                #     "매수취소주문", # 사용자 구분명
-                #     "5000", # 화면번호
-                #     self.account_num, # 계좌번호
-                #     3, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                #     종목코드, # 종목코드
-                #     미체결수량, #주문 수량
-                #     "", # 주문 가격, 시장가 외 경우 공백
-                #     "00", # 주문유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (코아스트디오 참소)
-                #     주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-                # )
+
                 pop_list.append(주문번호)
 
             # elif 주문구분 == "매도" and datetime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
@@ -242,20 +231,9 @@ class KiwoomAPI(QMainWindow):
             #                 "", # 주문 가격, 시장가의 경우 공백
             #                 "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
             #                 주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-
             #             ]
             #             ) 
-                # self.send_order(
-                #     "매도취소주문", # 사용자 구분
-                #     "5000", # 화면번호
-                #     self.account_num, # 계좌 번호
-                #     4, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                #     종목코드, # 종목코드
-                #     미체결수량, # 주문수량
-                #     "", # 주문 가격, 시장가의 경우 공백
-                #     "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등 (코아스트디오 참소)
-                #     주문번호, # 주분번호 (정정 주문의 경우 사용, 나머진 공백)
-                # )
+
                 # pop_list.append(주문번호)
         for order_num in pop_list:
             self.unfinished_order_num_to_info_dict.pop(order_num)
