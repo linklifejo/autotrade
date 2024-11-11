@@ -53,7 +53,6 @@ class KiwoomAPI(QMainWindow):
         qty = int(stack_buy_money / cost)
         if self.data_cnt >= self.max_buy_cnt:
             return 0
-        
         if stack_buy_money < cost:
             return 0
         return qty
@@ -396,10 +395,9 @@ class KiwoomAPI(QMainWindow):
 
                         ]
                         ) 
-    
-                    self.register_code_to_realtime_list('460930')
-                    del self.stock_dict[sJongmokCode]
-                    self.tr_req_queue.put([self.request_opw00018])
+                    if self.stock_dict[sJongmokCode]["보유수량"] == 0:
+                        del self.stock_dict[sJongmokCode]
+                        self.tr_req_queue.put([self.request_opw00018])
 
         elif sRealType == "주식호가잔량":
             시간 = self._get_comn_realdata(sRealType, 21)
@@ -408,7 +406,7 @@ class KiwoomAPI(QMainWindow):
             매도호가잔량1 = int(self._get_comn_realdata(sRealType, 61).replace('-', ''))
             매수호가잔량1 = int(self._get_comn_realdata(sRealType, 71).replace('-', ''))
             qty = self._buy_check(매수호가1)
-            if qty > 0 :
+            if qty > 0 and sJongmokCode not in self.stock_dict.keys():
                 self.tr_req_queue.put(
                     [
                         self.send_order, 
@@ -469,7 +467,7 @@ class KiwoomAPI(QMainWindow):
                     self.stock_dict.update({종목코드:{}})
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
-            self.tr_req_queue.put([self.request_opw00018])
+                self.tr_req_queue.put([self.request_opw00018])
             
         if sGubun == "1":
             logger.info("잔고통보")    
