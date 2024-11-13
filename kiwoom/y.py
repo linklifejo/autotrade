@@ -111,7 +111,7 @@ class KiwoomAPI(QMainWindow):
     def _on_opw00018_req(self, rqname, trcode):
         self.stock_dict.clear()
         try:
-            self.balance = int(self._comm_get_data(trcode, "", rqname, 0, "추정예탁자산"))
+            self.balance = int(self._comm_get_data(trcode, "", rqname, 0, "추정예탁자산").replace('-',''))
         except ValueError:
             print("Failed to convert balance data to integer.")
             self.balance = 0  # Assign a default value or handle it as needed
