@@ -9,6 +9,7 @@ from loguru import logger
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtCore import *
+from PyQt5.QtTest import *
 from collections import deque
 from queue import Queue
 
@@ -377,7 +378,7 @@ class KiwoomAPI(QMainWindow):
                 고가 = max(현재가, 고가) if 고가 else 현재가
                 self.stock_dict[sJongmokCode]["고가"] = 고가
                 if 현재가 <= 매입가 * 0.985 or 현재가 <= 고가 * 0.985:
-                    logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!11111111")
+                    logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
                     logger.info(f'보유수량: {self.stock_dict[sJongmokCode].get("보유수량", None)}')
                     self.tr_req_queue.put(
                         [
@@ -394,10 +395,10 @@ class KiwoomAPI(QMainWindow):
 
                         ]
                         ) 
-                    time.sleep(.1)
 
                     if self.stock_dict[sJongmokCode]["보유수량"] == 0:
                         del self.stock_dict[sJongmokCode]
+                    QTest.qWait(1)
 
         elif sRealType == "주식호가잔량":
             시간 = self._get_comn_realdata(sRealType, 21)
@@ -407,8 +408,7 @@ class KiwoomAPI(QMainWindow):
             매수호가잔량1 = int(self._get_comn_realdata(sRealType, 71).replace('-', ''))
             qty = int(self.buy_money / 매수호가1)
             # logger.info(f"qty: {qty}, buy_cnt: {self.buy_cnt}, max_buy_cnt: {self.max_buy_cnt}, stock_in_dict: {sJongmokCode in self.stock_dict.keys()}")
-            self.buy_cnt += 1
-            if qty > 0  and self.buy_cnt <= self.max_buy_cnt and sJongmokCode not in self.stock_dict.keys():
+            if qty > 0  and self.buy_cnt < self.max_buy_cnt and sJongmokCode not in self.stock_dict.keys():
                 self.tr_req_queue.put(
                     [
                         self.send_order, 
@@ -425,7 +425,9 @@ class KiwoomAPI(QMainWindow):
 
                     ]
                 )
-                time.sleep(.1)
+                self.buy_cnt += 1
+                QTest.qWait(1)
+
        
             # print(
             #     f"종목코드: {sJongmokCode}, 시간: {시간}, 매도호가1: {매도호가1}, 매수호가1: {매수호가1}, "
@@ -470,13 +472,11 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
             if 미체결수량 == 0:
-                chk = 주문번호 in self.unfinished_order_num_to_info_dict.keys()
-                if chk == True:
-                    self.unfinished_order_num_to_info_dict.pop(주문번호)
+                self.unfinished_order_num_to_info_dict.pop(주문번호,None)
+            self.tr_req_queue.put([self.request_opw00018])        
             
         if sGubun == "1":
             logger.info("잔고통보")    
-        self.tr_req_queue.put([self.request_opw00018])        
 
     def receive_msg(self, sScrno, sRQName, sTrcode, sMsg):
         logger.info(f"Received MSG! 화면번호: {sScrno}, 사용자 구분명: {sRQName}, TR이름: {sTrcode}, 메세지: {sMsg}")  

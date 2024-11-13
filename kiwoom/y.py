@@ -9,6 +9,7 @@ from loguru import logger
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtCore import *
+from PyQt5.QtTest import *
 from collections import deque
 from queue import Queue
 
@@ -494,9 +495,7 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
             if 미체결수량 == 0:
-                chk = 주문번호 in self.unfinished_order_num_to_info_dict.keys()
-                if chk == True:
-                    self.unfinished_order_num_to_info_dict.pop(주문번호)
+                self.unfinished_order_num_to_info_dict.pop(주문번호,None)
             
         if sGubun == "1":
             logger.info("잔고통보")    
