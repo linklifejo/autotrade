@@ -20,13 +20,15 @@ class KiwoomAPI(QMainWindow):
         if os.path.isfile('logfile.log'):
             os.remove('logfile.log')
         logger.add("logfile.log", rotation="1 day", retention="7 days", compression="zip")
+
+        self.event_loop = QEventLoop()
         self.order_screen = {}
         self.tr_req_scrnum = 0
         self.balance = 0
         self.total_buy_money = 0
         self.buy_money = 0
         self.buy_cnt = 0
-        self.max_buy_cnt = 1
+        self.max_buy_cnt = 19
         self.cal_cnt = self.max_buy_cnt
         self.now_time = datetime.datetime.now()
         self.stop_loss_threshold = -1.5
@@ -60,6 +62,7 @@ class KiwoomAPI(QMainWindow):
         ret = self.kiwoom.dynamicCall("CommConnect()")
         if ret == 0:
             logger.info("로그인 창 열기 성공!")
+        self.event_loop.exec_()
 
     def _event_connect(self, err_code):
         if err_code == 0:
@@ -67,6 +70,7 @@ class KiwoomAPI(QMainWindow):
             self._after_login()
         else:
             raise Exception("로그인 실패!")
+        self.event_loop.exit()
         
         
     def get_account_num(self):
@@ -74,11 +78,14 @@ class KiwoomAPI(QMainWindow):
         logger.info(f"계좌번호 리스트: {account_nums}")
         self.account_num = account_nums.split(';')[0]
         logger.info(f"사용 계좌 번호: {self.account_num}")     
-        self.tr_req_queue.put([self.request_opw00018])
+        
 
     def _after_login(self):
         self.get_account_num()
-        self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
+        self.tr_req_queue.put([self.request_opw00018]) 
+        self.tr_req_queue.put([self.kiwoom.dynamicCall,"GetConditionLoad()"]) 
+
+        # self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
         self.tr_req_check_timer.start(1000) # 0.1초마다 한번 Execute    
         self.unfinished_orders.start(2000) # 0.25초마다 한번 Execute   
         # self.req_upside_info_timer.start(3000)
@@ -109,7 +116,7 @@ class KiwoomAPI(QMainWindow):
         self._set_input_value("비밀번호입력대체구분", "00")
         self._set_input_value("조회구분", "2")
         self._comm_rq_data("opw00018_req", "opw00018", 0, self._get_tr_req_screen_num())
-        # self.event_loop.exec_()
+        self.event_loop.exec_()
 
 
     def _receive_tr_data(self, screen_no, rqname, trcode, record_name, next, unused1, unused2, unused3, unused4):
@@ -117,6 +124,7 @@ class KiwoomAPI(QMainWindow):
             self._on_opw00018_req(rqname, trcode)     
         elif rqname == "opt10019_req":
             self._on_opt10019_req(rqname, trcode)
+        self.event_loop.exit() 
 
     def _on_opw00018_req(self, rqname, trcode):
         self.stock_dict.clear()
@@ -144,6 +152,8 @@ class KiwoomAPI(QMainWindow):
         logger.info(f"현재평가잔고: {self.balance:,}원")
         logger.info(f"총매입급액: {self.total_buy_money:,}원")
         logger.info(f"보유종목수: {self.buy_cnt:,}개")
+        logger.info(f"설정된(max) 가능 거래 종목 수: {self.max_buy_cnt:,}개")
+        logger.info(f"현재가능 거래 종목 수: {self.cal_cnt:,}개")
 
         for i in range(self.buy_cnt):
             종목코드 = self._comm_get_data(trcode, "", rqname, i, "종목번호").replace("A","").strip()
@@ -175,7 +185,8 @@ class KiwoomAPI(QMainWindow):
             self.stock_dict[종목코드].update({"매입가": 매입가})
 
         for stock in self.stock_dict.keys():
-            logger.info(f'{self.stock_dict[stock]}')     
+            logger.info(f'{self.stock_dict[stock]}')    
+        
             
     def _on_opt10019_req(self, rqname, trcode):
         data_cnt = self._get_repeat_cnt(trcode, rqname)
@@ -308,8 +319,11 @@ class KiwoomAPI(QMainWindow):
         return ret.strip()
     
     def stock_buy(self,stock_code):
+
+        logger.info(f'max: {self.max_buy_cnt}, curr: {self.buy_cnt}')
         current_price = self.get_current_price(stock_code)
-        if 1000 <= current_price <= 20000:
+        if 1000 <= current_price <= 20000 and self.max_buy_cnt > self.buy_cnt:
+            logger.info(f'보유수량: {self.buy_cnt}')
             화면번호 = self._get_realtime_data_screen_num()
             self.order_screen.update({stock_code:화면번호})
             self.tr_req_queue.put(
@@ -328,6 +342,7 @@ class KiwoomAPI(QMainWindow):
 
                 ]
             )    
+
     def _receive_real_condition(self, strCode, strType, strConditionName, strConditionIndex):
         logger.info(f"Received real condition, {strCode}, {strType}, {strConditionName}, {strConditionIndex}")
         if strType == "I":
@@ -507,11 +522,10 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
             if 미체결수량 == 0:
                 self.unfinished_order_num_to_info_dict.pop(주문번호,None)
-            # self.tr_req_queue.put([self.request_opw00018]) 
-                   
             
         if sGubun == "1":
             logger.info("잔고통보")    
+        self.tr_req_queue.put([self.request_opw00018])   
 
 
     def receive_msg(self, sScrno, sRQName, sTrcode, sMsg):
