@@ -28,7 +28,7 @@ class KiwoomAPI(QMainWindow):
         self.total_buy_money = 0
         self.buy_money = 0
         self.buy_cnt = 0
-        self.max_buy_cnt = 19
+        self.max_buy_cnt = 1
         self.cal_cnt = self.max_buy_cnt
         self.now_time = datetime.datetime.now()
         self.stop_loss_threshold = -1.5
@@ -51,6 +51,16 @@ class KiwoomAPI(QMainWindow):
         self.tr_req_check_timer.timeout.connect(self._send_tr_request)
         self._set_signal_slots() # 키움증권 API와 내부 메소드를 연동
         self._login()
+        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
+
+    def gen_time(self):
+        t_now = datetime.datetime.now()
+        t_9 = t_now.replace(hour=9, minute=0, second=0, microsecond=0)
+        t_start = t_now.replace(hour=9, minute=1, second=0, microsecond=0)
+        t_ai = t_now.replace(hour=9, minute=30, second=0,microsecond=0)
+        t_sell = t_now.replace(hour=15, minute=15, second=0, microsecond=0)
+        t_exit = t_now.replace(hour=15, minute=20, second=0,microsecond=0)
+        return t_9,t_start,t_sell,t_exit,t_ai
 
     def get_current_price(self,code):
         data = int(self.kiwoom.GetMasterLastPrice(code).strip().replace('-',''))  # 현재가 가져오기
@@ -86,8 +96,8 @@ class KiwoomAPI(QMainWindow):
         self.tr_req_queue.put([self.kiwoom.dynamicCall,"GetConditionLoad()"]) 
 
         # self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청     
-        self.tr_req_check_timer.start(1000) # 0.1초마다 한번 Execute    
-        self.unfinished_orders.start(2000) # 0.25초마다 한번 Execute   
+        self.tr_req_check_timer.start(250) # 0.1초마다 한번 Execute    
+        self.unfinished_orders.start(500) # 0.25초마다 한번 Execute   
         # self.req_upside_info_timer.start(3000)
         # self.check_unfinished_orders_timer.start(250)
 
@@ -206,6 +216,27 @@ class KiwoomAPI(QMainWindow):
 
     def _send_tr_request(self):
         self.now_time = datetime.datetime.now()
+        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
+        if self.t_sell < self.now_time < self.t_exit:  # PM 03:15 ~ PM 03:20 : 일괄 매도
+            for stock_code in self.stock_dict.keys():
+                self.tr_req_queue.put(
+                    [
+                        self.send_order, 
+                        "시장가매도주문", # 사용자 구분명
+                        self.stock_dict[stock_code].get("화면번호","5000"), # 화면번호
+                        self.account_num, # 계좌번호
+                        2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                        stock_code, # 종목코드
+                        self.stock_dict[stock_code].get("보유수량", None), # 주문 수량
+                        "", # 주문 가격, 시장가의 경우 공백
+                        "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+
+                    ]
+                    )      
+        if self.t_exit < self.now_time:  # PM 03:20 ~ :프로그램 종료
+            logger.info(f"오늘 장 마감~~ 프로그램을 종료 합니다.")
+            sys.exit()
         if self._is_check_tr_req_condition() and not self.tr_req_queue.empty():
             request_func, *func_args = self.tr_req_queue.get()
             logger.info(f"Executing TR request function: {request_func}")
@@ -231,6 +262,7 @@ class KiwoomAPI(QMainWindow):
             return True
 
     def check_unfinished_orders(self):
+                  
         pop_list = []   
         for order_num in self.unfinished_order_num_to_info_dict.keys():
             주문번호 = order_num
@@ -319,10 +351,9 @@ class KiwoomAPI(QMainWindow):
         return ret.strip()
     
     def stock_buy(self,stock_code):
-
         logger.info(f'max: {self.max_buy_cnt}, curr: {self.buy_cnt}')
         current_price = self.get_current_price(stock_code)
-        if 1000 <= current_price <= 20000 and self.max_buy_cnt > self.buy_cnt:
+        if 1000 <= current_price <= 20000 and stock_code not in self.stock_dict.keys():
             logger.info(f'보유수량: {self.buy_cnt}')
             화면번호 = self._get_realtime_data_screen_num()
             self.order_screen.update({stock_code:화면번호})
@@ -335,14 +366,13 @@ class KiwoomAPI(QMainWindow):
                     1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
                     stock_code, # 종목코드
                     # qty, # 주문 수량
-                    1, # 주문 수량
+                    5, # 주문 수량
                     "", # 주문 가격, 시장가의 경우 공백
                     "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
                     "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
 
                 ]
             )    
-
     def _receive_real_condition(self, strCode, strType, strConditionName, strConditionIndex):
         logger.info(f"Received real condition, {strCode}, {strType}, {strConditionName}, {strConditionIndex}")
         if strType == "I":
@@ -424,7 +454,7 @@ class KiwoomAPI(QMainWindow):
                 고가 = self.stock_dict[sJongmokCode].get("고가", None)
                 매입가 = self.stock_dict[sJongmokCode].get("매입가", None)
                 고가 = max(현재가, 고가) if 고가 else 현재가
-                self.stock_dict[sJongmokCode]["고가"] = 고가
+                self.stock_dict[sJongmokCode].update({"고가":고가})
                 if 현재가 <= 매입가 * 0.985 or 현재가 <= 고가 * 0.985:
                     logger.info(f"종목코드: {sJongmokCode}, 시장가 매도 진행!")
                     logger.info(f'보유수량: {self.stock_dict[sJongmokCode].get("보유수량", None)}')
@@ -457,8 +487,7 @@ class KiwoomAPI(QMainWindow):
             매수호가잔량1 = int(self._get_comn_realdata(sRealType, 71).replace('-', ''))
             # qty = int(self.buy_money / 매수호가1)
             # # logger.info(f"qty: {qty}, buy_cnt: {self.buy_cnt}, max_buy_cnt: {self.max_buy_cnt}, stock_in_dict: {sJongmokCode in self.stock_dict.keys()}")
-            # if qty > 0 and 매수호가1 < 10000 and self.cal_cnt > 0 and sJongmokCode not in self.stock_dict.keys() and sJongmokCode not in self.unfinished_order_num_to_info_dict.keys():
-            #     self.cal_cnt -= 1
+            # if qty > 0 and 1000 <= 매수호가1 <= 20000 and sJongmokCode not in self.stock_dict.keys() and sJongmokCode not in self.unfinished_order_num_to_info_dict.keys():
             #     self.tr_req_queue.put(
             #         [
             #             self.send_order, 
