@@ -189,9 +189,6 @@ class KiwoomAPI(QMainWindow):
         self.kiwoom.dynamicCall("GetConditionLoad()") # 조건 검색 정보 요청 
         self.start_trading()    
 
-    def get_account_info(self):
-        self.tr_req_queue.put([self.request_opw00018]) 
-
     def get_tmp_high_volatility_info(self):
         self.tr_req_queue.put([self.request_opt10019, "001", True]) 
 
@@ -304,7 +301,6 @@ class KiwoomAPI(QMainWindow):
             logger.info(f"종목코드: {종목코드}, 종목분류: {종목분류}, 종목명: {종목명}")
 
     def check_unfinished_orders(self):
-                  
         pop_list = []   
         for order_num in self.unfinished_order_num_to_info_dict.keys():
             주문번호 = order_num
@@ -320,20 +316,17 @@ class KiwoomAPI(QMainWindow):
             )
             if 주문구분 == "매수" and datetime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
                 logger.info(f"=== 미체결 === 종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매수 취소 주문:")
-                self.tr_req_queue.put(
-                        [
-                            self.send_order, 
-                            "매수취소주문", # 사용자 구분명
-                            화면번호, # 화면번호
-                            self.account_num, # 계좌번호
-                            3, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                            종목코드, # 종목코드
-                            미체결수량, # 주문 수량
-                            "", # 주문 가격, 시장가의 경우 공백
-                            "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                            주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+                self.send_order( 
+                    "매수취소주문", # 사용자 구분명
+                    화면번호, # 화면번호
+                    self.account_num, # 계좌번호
+                    3, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                    종목코드, # 종목코드
+                    미체결수량, # 주문 수량
+                    "", # 주문 가격, 시장가의 경우 공백
+                    "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                    주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
 
-                        ]
                         ) 
                 pop_list.append(주문번호)
 
