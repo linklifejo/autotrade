@@ -25,6 +25,8 @@ class KiwoomAPI(QMainWindow):
         self.order_screen = {}
         self.tr_req_scrnum = 0
         self.balance = 0
+        self.min_buy_cost = 1000
+        self.max_buy_cost = 20000
         self.total_buy_money = 0
         self.buy_money = 0
         self.max_buy_cnt = 10
@@ -366,7 +368,7 @@ class KiwoomAPI(QMainWindow):
         self.buy_cnt = len(self.stock_dict)
         self.cal_cnt = self.max_buy_cnt - self.buy_cnt
         current_price = self.get_current_price(stock_code)
-        if 1000 <= current_price <= 20000 and self.cal_cnt > 0:
+        if self.min_buy_cost <= current_price <= self.max_buy_cost and self.cal_cnt > 0:
             logger.info(f'시장가매수 {stock_code}, {stock_name}, {self.buy_qty}')
             if stock_code not in self.stock_dict.keys():
                 self.stock_dict.update({stock_code:{}})
