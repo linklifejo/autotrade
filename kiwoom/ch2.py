@@ -578,7 +578,19 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict.pop(종목코드,'미존재')
             
         if sGubun == "1":
-            logger.info("잔고통보")    
+            계좌번호 = self.get_chejandata(9201).strip()   
+            종목코드 = self.get_chejandata(9001).replace("A", "").strip()    
+            종목명 = self.get_chejandata(302).strip()   
+            현재가 = 0 if len(self.get_chejandata(933)) == 0 else int(self.get_chejandata(933))
+            매입단가 = 0 if len(self.get_chejandata(932)) == 0 else int(self.get_chejandata(932))
+            보유수량 = 0 if len(self.get_chejandata(930)) == 0 else int(self.get_chejandata(930))
+            평가손익 = 0 if len(self.get_chejandata(934)) == 0 else int(self.get_chejandata(934))
+            수익률 = 0 if len(self.get_chejandata(935)) == 0 else float(self.get_chejandata(935))
+            logger.info(
+                f"Received chejandata! 계좌번호: {계좌번호}, {종목코드}, {종목명}, {보유수량}개(보유) "
+                f"현재가: {현재가}, 매입단가: {매입단가}, "
+                f"평가손익: {평가손익}, 수익률: {수익률}"
+            )  
         # self.tr_req_queue.put([self.request_opw00018])   
         # self.request_opw00018() 
 
