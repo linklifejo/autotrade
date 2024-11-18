@@ -559,25 +559,23 @@ class KiwoomAPI(QMainWindow):
                 f"종목명: {종목명}, 주문수량: {주문수량}, 주문가격: {주문가격}, 체결수량: {체결수량}, 체결가격: {체결가격}, "
                 f"단위체결량: {단위체결량}, 주문번호: {주문번호}, 원주문번호: {원주문번호}"
             )
-            if 체결수량 == 0:
+
+            if 주문구분 == '매수' and 체결수량 > 0:
+                self.stock_dict[종목코드][ "보유수량"] = 체결수량
+                self.stock_dict[종목코드][ "매입가"] = 체결가격
+
+            if 주문구분 in ['매도','매도정정']: 
                 self.unfinished_order_num_to_info_dict.update({주문번호 :{}})
                 self.unfinished_order_num_to_info_dict[주문번호].update({"종목코드": 종목코드}) 
                 self.unfinished_order_num_to_info_dict[주문번호].update({"미체결수량": 미체결수량}) 
                 self.unfinished_order_num_to_info_dict[주문번호].update({"주문체결시간": 주문체결시간}) 
                 self.unfinished_order_num_to_info_dict[주문번호].update({"주문구분": 주문구분}) 
                 self.unfinished_order_num_to_info_dict[주문번호].update({"화면번호": self.order_screen.get(종목코드,"5000")}) 
-            else:    
-
-                if 종목코드 not in self.stock_dict.keys():
-                        self.stock_dict.update({종목코드:{}})
-                self.stock_dict[종목코드][ "보유수량"] = 체결수량
-                self.stock_dict[종목코드][ "매입가"] = 체결가격
+                
             if 미체결수량 == 0:
-                self.unfinished_order_num_to_info_dict.pop(주문번호,None)
-            # 주문구분 지정가 , 시장가
-            if 매매구분 == '매도': # 매수 : "1", 매도 : "2"
                 self.stock_dict.pop(종목코드,'미존재')
-            
+                self.unfinished_order_num_to_info_dict.pop(주문번호,None)
+
         if sGubun == "1":
             계좌번호 = self.get_chejandata(9201).strip()   
             종목코드 = self.get_chejandata(9001).replace("A", "").strip()    
