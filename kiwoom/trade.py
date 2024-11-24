@@ -84,7 +84,7 @@ class KiwoomAPI(QMainWindow):
         is_available, remain_count = self.check_tr_limit()
         while not is_available:  # 호출 가능할 때까지 대기
             print("TR 호출 제한에 도달. 대기 중...")
-            time.sleep(1)  # 1초 대기
+            QTest.qWait(1000)
             is_available, remain_count = self.check_tr_limit()    
 
     def get_current_price(self,code):
@@ -126,7 +126,7 @@ class KiwoomAPI(QMainWindow):
         # self.unfinished_orders.start(500) # 0.25초마다 한번 Execute   
         # self.req_upside_info_timer.start(3000)
         # self.check_unfinished_orders_timer.start(250)
-        self.check_tr_limit()
+        # self.check_tr_limit()
 
     def get_account_info(self):
         self.tr_req_queue.put([self.request_opw00018]) 
@@ -377,11 +377,27 @@ class KiwoomAPI(QMainWindow):
     def stock_buy(self,stock_code):
         self.now_time = datetime.datetime.now()
         self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
-        if self.t_9 < self.now_time < self.t_exit:  # PM 03:15 ~ PM 03:20 : 일괄 매도
+        if self.t_9 < self.now_time < self.t_sell:  # PM 03:15 ~ PM 03:20 : 일괄 매도
             pass
         else:
-            return
-        
+            for stock_code in self.stock_dict.keys():
+                self.waitting()
+                self.send_order( 
+                    "시장가매도주문", # 사용자 구분명
+                    self.stock_dict[stock_code].get("화면번호","5000"), # 화면번호
+                    self.account_num, # 계좌번호
+                    2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                    stock_code, # 종목코드
+                    self.stock_dict[stock_code].get("보유수량", None), # 주문 수량
+                    "", # 주문 가격, 시장가의 경우 공백
+                    "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                    "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+
+                )      
+            if self.t_exit < self.now_time:  # PM 03:20 ~ :프로그램 종료
+                logger.info(f"오늘 장 마감~~ 프로그램을 종료 합니다.")
+                sys.exit()   
+ # 거래가능(9시에서 3시 15분 : 매수, 매도 가능) 15분이후에는 보유주식 매도만 가능                 
         stock_name = self.get_company_name(stock_code)
         self.cal_cnt = self.max_buy_cnt - len(self.stock_dict)
         self.buy_cnt = len(self.stock_dict)
