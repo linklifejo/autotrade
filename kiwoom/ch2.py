@@ -51,8 +51,8 @@ class KiwoomAPI(QMainWindow):
         self.kiwoom = QAxWidget("KHOPENAPI.KHOpenAPICtrl.1")
         self.unfinished_orders = QTimer()
         self.unfinished_orders.timeout.connect(self.check_unfinished_orders)
-        self.tr_req_check_timer = QTimer()
-        self.tr_req_check_timer.timeout.connect(self._send_tr_request)
+        self.stock_sell_timer = QTimer()
+        self.stock_sell_timer.timeout.connect(self.stock_sell)
         # self.timer = QTimer(self)
         # self.timer.timeout.connect(self.restart_program)
         # self.timer.start(60000)  # 60초 (1분)        
@@ -75,6 +75,7 @@ class KiwoomAPI(QMainWindow):
     def get_company_name(self,code):
         company_name = self.kiwoom.GetMasterCodeName(code).strip()  # 업체명 가져오기
         return company_name
+    
     def _login(self):
         ret = self.kiwoom.dynamicCall("CommConnect()")
         if ret == 0:
@@ -88,7 +89,14 @@ class KiwoomAPI(QMainWindow):
         else:
             raise Exception("로그인 실패!")
         self.event_loop.exit()
-        
+
+    def _after_login(self):
+        self.get_account_num()
+        self.request_opw00018() 
+        self.kiwoom.dynamicCall("GetConditionLoad()") 
+        self.stock_sell_timer.start(20) # 0.2초마다 sell   
+        self.unfinished_orders.start(500) # 0.5초마다 order_buied cancel   
+        # self.req_upside_info_timer.start(3000)        
         
     def get_account_num(self):
         account_nums = str(self.kiwoom.dynamicCall("GetLoginInfo(QString)", ["ACCNO"]).rstrip(';'))
@@ -96,14 +104,7 @@ class KiwoomAPI(QMainWindow):
         self.account_num = account_nums.split(';')[0]
         logger.info(f"사용 계좌 번호: {self.account_num}")     
         
-    def _after_login(self):
-        self.get_account_num()
-        self.request_opw00018() 
-        self.tr_req_queue.put([self.kiwoom.dynamicCall,"GetConditionLoad()"]) 
-        self.kiwoom.dynamicCall("GetConditionLoad()") 
-        self.tr_req_check_timer.start(20) # 0.1초마다 한번 Execute    
-        self.unfinished_orders.start(500) # 0.25초마다 한번 Execute   
-        # self.req_upside_info_timer.start(3000)
+
 
     def get_account_info(self):
         self.tr_req_queue.put([self.request_opw00018]) 
@@ -218,66 +219,7 @@ class KiwoomAPI(QMainWindow):
             급등률 = self._comm_get_data(trcode, "", rqname, i, "급등률")
             logger.info(f"종목코드: {종목코드}, 종목분류: {종목분류}, 종목명: {종목명}")
 
-    def _send_tr_request(self):
-        self.now_time = datetime.datetime.now()
-        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
-        if self.t_9 < self.now_time < self.t_sell:  # PM 03:15 ~ PM 03:20 : 일괄 매도
-            for stock_code in list(self.stock_dict.keys()):
-                if stock_code not in self.stock_dict:
-                    continue
-                보유수량 = self.stock_dict[stock_code].get("보유수량", 0)
-                현재가 = self.get_current_price(stock_code)
-                stock_name = self.get_company_name(stock_code)
-                고가 = self.stock_dict[stock_code].get("고가", 현재가)
-                매입가 = self.stock_dict[stock_code].get("매입가", 현재가)
-                고가 = max(현재가, 고가) if 고가 else 현재가
-                화면번호 = self.stock_dict[stock_code].get("화면번호", "5000")                
-                self.stock_dict[stock_code].update({"고가":고가})
-                # 매입가 기준 손실 조건
-                손실_조건 = 현재가 <= 매입가 * 0.985
-                # 고가 기준 하락 조건
-                수익_조건 = 현재가 > 매입가 * 1.01
-                print(현재가,매입가)
-                # if 상태 == '매입' and  보유수량 > 0 and (현재가 <= 매입가 * 0.970 or 현재가 <= 고가 * 0.985):
-                if 손실_조건 or 수익_조건:
-                    logger.info(f"시장가매도[{self.now_time}] == {stock_code} {stock_name} {보유수량} {매입가}  {현재가} ==")
-                    if 보유수량 > 0:
-                        self.send_order( 
-                                "시장가매도주문", # 사용자 구분명
-                                화면번호, # 화면번호
-                                self.account_num, # 계좌번호
-                                2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                                stock_code, # 종목코드
-                                self.stock_dict[stock_code].get("보유수량", None), # 주문 수량
-                                "", # 주문 가격, 시장가의 경우 공백
-                                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-
-                            )      
-                        QTest.qWait(200)
-                
-        if self.t_sell < self.now_time < self.t_exit:  # PM 03:15 ~ PM 03:20 : 일괄 매도
-            for stock_code in self.stock_dict.keys():
-                self.send_order( 
-                "시장가매도주문", # 사용자 구분명
-                self.stock_dict[stock_code].get("화면번호","5000"), # 화면번호
-                self.account_num, # 계좌번호
-                2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                stock_code, # 종목코드
-                self.stock_dict[stock_code].get("보유수량", None), # 주문 수량
-                "", # 주문 가격, 시장가의 경우 공백
-                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-
-            )      
-        if self.t_exit < self.now_time:  # PM 03:20 ~ :프로그램 종료
-            logger.info(f"오늘 장 마감~~ 프로그램을 종료 합니다.")
-            sys.exit()
-        # if self._is_check_tr_req_condition() and not self.tr_req_queue.empty():
-        #     request_func, *func_args = self.tr_req_queue.get()
-        #     # logger.info(f"Executing TR request function: {request_func}")
-        #     request_func(*func_args) if func_args else request_func()
-        #     self.last_tr_send_times.append(self.now_time)   
+   
 
     def _is_check_tr_req_condition(self):
         self.now_time = datetime.datetime.now()            
@@ -297,59 +239,7 @@ class KiwoomAPI(QMainWindow):
         else:
             return True
 
-    def check_unfinished_orders(self):
-                  
-        pop_list = []   
-        for order_num in self.unfinished_order_num_to_info_dict.keys():
-            주문번호 = order_num
-            종목코드 = self.unfinished_order_num_to_info_dict[주문번호]["종목코드"]    
-            주문체결시간 = self.unfinished_order_num_to_info_dict[주문번호]["주문체결시간"]    
-            미체결수량 = self.unfinished_order_num_to_info_dict[주문번호]["미체결수량"]    
-            주문구분 = self.unfinished_order_num_to_info_dict[주문번호]["주문구분"]    
-            화면번호 = self.unfinished_order_num_to_info_dict[주문번호]["화면번호"]    
-            order_time = datetime.datetime.now().replace(
-                hour = int(주문체결시간[:-4]),
-                minute = int(주문체결시간[-4:-2]),
-                second = int(주문체결시간[-2:])
-            )
-            if 주문구분 == "매수" and datetime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
-                # logger.info(f"=== 미체결 === 종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매수 취소 주문:")
-                self.send_order( 
-                            "매수취소주문", # 사용자 구분명
-                            화면번호, # 화면번호
-                            self.account_num, # 계좌번호
-                            3, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                            종목코드, # 종목코드
-                            미체결수량, # 주문 수량
-                            "", # 주문 가격, 시장가의 경우 공백
-                            "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                            주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
 
-                ) 
-                pop_list.append(주문번호)
-                QTest.qWait(200)
-
-
-            # elif 주문구분 == "매도" and datetime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
-            #     logger.info(f"종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매도 취소 주문!")
-            #     self.tr_req_queue.put(
-            #             [
-            #                 self.send_order, 
-            #                 "매도취소주문", # 사용자 구분명
-            #                 "5000", # 화면번호
-            #                 self.account_num, # 계좌번호
-            #                 4, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-            #                 종목코드, # 종목코드
-            #                 미체결수량, # 주문 수량
-            #                 "", # 주문 가격, 시장가의 경우 공백
-            #                 "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-            #                 주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-            #             ]
-            #             ) 
-
-                # pop_list.append(주문번호)
-        for order_num in pop_list:
-            self.unfinished_order_num_to_info_dict.pop(order_num, None)
         
     def _set_signal_slots(self):
         self.kiwoom.OnEventConnect.connect(self._event_connect)
@@ -385,52 +275,7 @@ class KiwoomAPI(QMainWindow):
         )
         return ret.strip()
     
-    def stock_buy(self,stock_code):
-        self.now_time = datetime.datetime.now()
-        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
-        if self.t_9 < self.now_time < self.t_sell:  # PM 03:15 ~ PM 03:20 : 일괄 매도
-            pass
-        else:
-            return
-        if stock_code not in self.stock_dict.keys():
-            stock_name = self.get_company_name(stock_code)
-            current_price = self.get_current_price(stock_code)
-            self.buy_qty = int(self.buy_money / current_price)
-            화면번호 = self._get_realtime_data_screen_num()
-            self.order_screen.update({stock_code:화면번호})
-            if self.min_buy_cost <= current_price <= self.max_buy_cost and self.cal_cnt > 0:
-                self.cal_cnt -= 1
-                logger.info(f'시장가매수 {stock_code}, {stock_name}, {self.buy_qty}')
-                self.send_order( 
-                        "시장가매수주문", # 사용자 구분명
-                        화면번호, # 화면번호
-                        self.account_num, # 계좌번호
-                        1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                        stock_code, # 종목코드
-                        # qty, # 주문 수량
-                        self.buy_qty, # 주문 수량
-                        "", # 주문 가격, 시장가의 경우 공백
-                        "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
 
-                )    
-                QTest.qWait(200)
-                # self.tr_req_queue.put(
-                #     [
-                #         self.send_order, 
-                #         "시장가매수주문", # 사용자 구분명
-                #         화면번호, # 화면번호
-                #         self.account_num, # 계좌번호
-                #         1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                #         stock_code, # 종목코드
-                #         # qty, # 주문 수량
-                #         self.buy_qty, # 주문 수량
-                #         "", # 주문 가격, 시장가의 경우 공백
-                #         "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                #         "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
-
-                #     ]
-                # )                    
 
     def _receive_real_condition(self, strCode, strType, strConditionName, strConditionIndex):
         # logger.info(f"Received real condition, {strCode}, {strType}, {strConditionName}, {strConditionIndex}")
@@ -462,7 +307,7 @@ class KiwoomAPI(QMainWindow):
         if len(code) != 0:
             화면번호 = self._get_realtime_data_screen_num()
             self.set_real(화면번호, code, fid_list,"1")
-            # logger.info(f"{code}, 실시간 등록 완료!")
+            logger.info(f"{code}, 실시간 등록 완료!")
             if code not in self.realtime_registed_codes.keys():
                 self.realtime_registed_codes.update({code:{}})
             self.realtime_registed_codes[code]["화면번호"] = 화면번호
@@ -471,7 +316,7 @@ class KiwoomAPI(QMainWindow):
         if len(code) != 0:
             화면번호 = self.realtime_registed_codes[code]["화면번호"]
             self.set_real_remove(화면번호, code)
-            # logger.info(f"{code}, 실시간 해지(unregister) 완료!")
+            logger.info(f"{code}, 실시간 해지(unregister) 완료!")
             self.realtime_registed_codes.pop(code)            
 
     def _get_tr_req_screen_num(self):
@@ -630,6 +475,8 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict.update({종목코드:{}})
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
+                self.stock_dict[종목코드][ "종목명"] = 종목명
+
 
             if 주문구분 in ['매도','매도정정']: 
                 self.unfinished_order_num_to_info_dict.update({주문번호 :{}})
@@ -659,23 +506,177 @@ class KiwoomAPI(QMainWindow):
                 f"현재가: {현재가}, 매입단가: {매입단가}, "
                 f"평가손익: {평가손익}, 수익률: {수익률}"
             )  
-        # self.tr_req_queue.put([self.request_opw00018])   
-        # self.request_opw00018() 
-
 
     def receive_msg(self, sScrno, sRQName, sTrcode, sMsg):
         os.system("cls") 
         logger.info(f"Received MSG! 화면번호: {sScrno}, 사용자 구분명: {sRQName}, TR이름: {sTrcode}, 메세지: {sMsg}")  
-        # self.tr_req_queue.put([self.request_opw00018])   
-        # self.request_opw00018() 
 
     def restart_program(self):
             """프로그램을 재시작"""
             print("프로그램 재시작 중...")
             python = sys.executable
             os.execl(python, python, *sys.argv)
-        
 
+    def check_unfinished_orders(self):
+                  
+        pop_list = []   
+        for order_num in self.unfinished_order_num_to_info_dict.keys():
+            주문번호 = order_num
+            종목코드 = self.unfinished_order_num_to_info_dict[주문번호]["종목코드"]    
+            주문체결시간 = self.unfinished_order_num_to_info_dict[주문번호]["주문체결시간"]    
+            미체결수량 = self.unfinished_order_num_to_info_dict[주문번호]["미체결수량"]    
+            주문구분 = self.unfinished_order_num_to_info_dict[주문번호]["주문구분"]    
+            화면번호 = self.unfinished_order_num_to_info_dict[주문번호]["화면번호"]    
+            order_time = datetime.datetime.now().replace(
+                hour = int(주문체결시간[:-4]),
+                minute = int(주문체결시간[-4:-2]),
+                second = int(주문체결시간[-2:])
+            )
+            if 주문구분 == "매수" and datetime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
+                # logger.info(f"=== 미체결 === 종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매수 취소 주문:")
+                self.send_order( 
+                            "매수취소주문", # 사용자 구분명
+                            화면번호, # 화면번호
+                            self.account_num, # 계좌번호
+                            3, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                            종목코드, # 종목코드
+                            미체결수량, # 주문 수량
+                            "", # 주문 가격, 시장가의 경우 공백
+                            "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                            주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+
+                ) 
+                pop_list.append(주문번호)
+                QTest.qWait(200)
+
+
+            # elif 주문구분 == "매도" and datetime.datetime.now() - order_time >= datetime.timedelta(seconds=10):
+            #     logger.info(f"종목코드: {종목코드}, 주문번호: {주문번호}, 미체결수량: {미체결수량}, 매도 취소 주문!")
+            #     self.tr_req_queue.put(
+            #             [
+            #                 self.send_order, 
+            #                 "매도취소주문", # 사용자 구분명
+            #                 "5000", # 화면번호
+            #                 self.account_num, # 계좌번호
+            #                 4, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+            #                 종목코드, # 종목코드
+            #                 미체결수량, # 주문 수량
+            #                 "", # 주문 가격, 시장가의 경우 공백
+            #                 "00", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+            #                 주문번호, # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+            #             ]
+            #             ) 
+
+                # pop_list.append(주문번호)
+        for order_num in pop_list:
+            self.unfinished_order_num_to_info_dict.pop(order_num, None)
+
+    def stock_buy(self,stock_code):
+        self.now_time = datetime.datetime.now()
+        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
+        if self.t_9 < self.now_time < self.t_sell:  # 9 ~ 3:15 : 매수
+            pass
+        else:
+            return
+        if stock_code not in self.stock_dict.keys():
+            stock_name = self.get_company_name(stock_code)
+            current_price = self.get_current_price(stock_code)
+            self.buy_qty = int(self.buy_money / current_price)
+            화면번호 = self._get_realtime_data_screen_num()
+            if self.min_buy_cost <= current_price <= self.max_buy_cost and self.cal_cnt > 0:
+                self.cal_cnt -= 1
+                logger.info(f'시장가매수 {stock_code}, {stock_name}, {self.buy_qty}')
+                self.send_order( 
+                        "시장가매수주문", # 사용자 구분명
+                        화면번호, # 화면번호
+                        self.account_num, # 계좌번호
+                        1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                        stock_code, # 종목코드
+                        # qty, # 주문 수량
+                        self.buy_qty, # 주문 수량
+                        "", # 주문 가격, 시장가의 경우 공백
+                        "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+
+                )    
+                QTest.qWait(200)
+                self.order_screen.update({stock_code:화면번호})
+                # self.tr_req_queue.put(
+                #     [
+                #         self.send_order, 
+                #         "시장가매수주문", # 사용자 구분명
+                #         화면번호, # 화면번호
+                #         self.account_num, # 계좌번호
+                #         1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                #         stock_code, # 종목코드
+                #         # qty, # 주문 수량
+                #         self.buy_qty, # 주문 수량
+                #         "", # 주문 가격, 시장가의 경우 공백
+                #         "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                #         "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+
+                #     ]
+                # )   
+
+    def stock_sell(self):
+        self.now_time = datetime.datetime.now()
+        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
+        if self.t_9 < self.now_time < self.t_sell:  # 9 ~ 3:15 : 일괄 매도
+            for stock_code in list(self.stock_dict.keys()):
+                if stock_code not in self.stock_dict:
+                    continue
+
+                stock_name = self.get_company_name(stock_code)
+                화면번호 = self.stock_dict[stock_code].get("화면번호", "5000")                
+                보유수량 = self.stock_dict[stock_code].get("보유수량", 0)
+                매입가 = self.stock_dict[stock_code].get("매입가", 현재가)
+                현재가 = self.get_current_price(stock_code)
+                고가 = self.stock_dict[stock_code].get("고가", 현재가)
+                고가 = max(현재가, 고가) if 고가 else 현재가
+                self.stock_dict[stock_code].update({"고가":고가})
+                손실_조건 = 현재가 <= 매입가 * 0.985
+                수익_조건 = 현재가 > 매입가 * 1.01
+                print(현재가,매입가)
+                # if 상태 == '매입' and  보유수량 > 0 and (현재가 <= 매입가 * 0.970 or 현재가 <= 고가 * 0.985):
+                if 손실_조건 or 수익_조건:
+                    logger.info(f"시장가매도[{self.now_time}] == {stock_code} {stock_name} {보유수량} {매입가}  {현재가} ==")
+                    if 보유수량 > 0:
+                        self.send_order( 
+                                "시장가매도주문", # 사용자 구분명
+                                화면번호, # 화면번호
+                                self.account_num, # 계좌번호
+                                2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                                stock_code, # 종목코드
+                                화면번호, # 주문 수량
+                                "", # 주문 가격, 시장가의 경우 공백
+                                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+
+                            )      
+                        QTest.qWait(200)
+                
+        elif self.t_sell < self.now_time < self.t_exit:  # PM 03:15 ~ PM 03:20 : 일괄 매도
+            for stock_code in self.stock_dict.keys():
+                self.send_order( 
+                "시장가매도주문", # 사용자 구분명
+                self.stock_dict[stock_code].get("화면번호","5000"), # 화면번호
+                self.account_num, # 계좌번호
+                2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+                stock_code, # 종목코드
+                self.stock_dict[stock_code].get("보유수량", None), # 주문 수량
+                "", # 주문 가격, 시장가의 경우 공백
+                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+
+            )      
+        elif self.t_exit < self.now_time:  # PM 03:20 ~ :프로그램 종료
+            logger.info(f"오늘 장 마감~~ 프로그램을 종료 합니다.")
+            sys.exit()
+        # if self._is_check_tr_req_condition() and not self.tr_req_queue.empty():
+        #     request_func, *func_args = self.tr_req_queue.get()
+        #     # logger.info(f"Executing TR request function: {request_func}")
+        #     request_func(*func_args) if func_args else request_func()
+        #     self.last_tr_send_times.append(self.now_time)
             
 if __name__ == "__main__":
     app = QApplication(sys.argv)            
