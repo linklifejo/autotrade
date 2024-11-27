@@ -23,6 +23,7 @@ class KiwoomAPI(QMainWindow):
 
         self.event_loop = QEventLoop()
         self.order_screen = {}
+        self.order_error_log = []
         self.tr_req_scrnum = 0
         self.balance = 0
         self.min_buy_cost = 1000
@@ -31,11 +32,15 @@ class KiwoomAPI(QMainWindow):
         self.buy_money = 0
         self.max_buy_cnt = 2
         self.buy_cnt = 0
+        self.buy_divide = 2
         self.cal_cnt = 0
         self.buy_qty = 5
+        self.total_qty = 0
         self.now_time = datetime.datetime.now()
         self.stop_loss_threshold = -1.5
         self.realtime_data_scrnum = 5000
+        self.gain = 1.01
+        self.loss = 0.985
         self.tr_reg_scrnum = 5150
         self.max_send_per_sec = 4 # 초당 TR 호출 최대 4번
         self.max_send_per_minute = 55 # 분당 TR 호출 최대 55번
@@ -476,6 +481,9 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
                 self.stock_dict[종목코드][ "종목명"] = 종목명
+                divide = self.stock_dict[종목코드].get('분할매수',self.buy_divide)
+                self.stock_dict[종목코드].update({'분할매수':divide - 1})
+
 
 
             if 주문구분 in ['매도','매도정정']: 
@@ -488,6 +496,7 @@ class KiwoomAPI(QMainWindow):
                 
             if 주문구분 == '매도' and 미체결수량 == 0:
                 self.cal_cnt += 1
+
                 self.stock_dict.pop(종목코드,'미존재')
             if 미체결수량 == 0:
                 self.unfinished_order_num_to_info_dict.pop(주문번호,None)
@@ -571,113 +580,173 @@ class KiwoomAPI(QMainWindow):
         for order_num in pop_list:
             self.unfinished_order_num_to_info_dict.pop(order_num, None)
 
-    def stock_buy(self,stock_code):
+    def stock_buy(self, stock_code):
         self.now_time = datetime.datetime.now()
-        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
-        if self.t_9 < self.now_time < self.t_sell:  # 9 ~ 3:15 : 매수
-            pass
-        else:
+        self.t_9, self.t_start, self.t_sell, self.t_exit, self.t_ai = self.gen_time()
+
+        # 1. 매수 가능 시간 확인
+        if not (self.t_9 < self.now_time < self.t_sell):
+            print("매수 가능한 시간이 아닙니다.")
             return
-        if stock_code not in self.stock_dict.keys():
-            stock_name = self.get_company_name(stock_code)
-            current_price = self.get_current_price(stock_code)
-            self.buy_qty = int(self.buy_money / current_price)
-            화면번호 = self._get_realtime_data_screen_num()
-            if self.min_buy_cost <= current_price <= self.max_buy_cost and self.cal_cnt > 0:
+
+        # 2. 현재가 가져오기
+        current_price = self.get_current_price(stock_code)
+        if current_price is None:
+            print(f"현재가를 가져오지 못했습니다: {stock_code}")
+            return
+
+        # 3. 매수가격 범위 확인
+        if not (self.min_buy_cost <= current_price <= self.max_buy_cost):
+            print(f"매수가격 범위를 벗어남: 현재가={current_price}")
+            return
+
+        # 4. 종목 관리 여부 확인
+        isCode = stock_code in self.stock_dict
+
+        # 5. 매수 금액 및 수량 계산
+        stock_name = self.get_company_name(stock_code)
+        divide_money = self.buy_money / self.buy_divide
+        self.buy_qty = int(divide_money / current_price)
+        화면번호 = self._get_realtime_data_screen_num()
+
+        # 6. 분할 매수 및 추가 매수 조건 확인
+        if self.cal_cnt > 0:
+            if not isCode:
                 self.cal_cnt -= 1
-                logger.info(f'시장가매수 {stock_code}, {stock_name}, {self.buy_qty}')
-                self.send_order( 
-                        "시장가매수주문", # 사용자 구분명
-                        화면번호, # 화면번호
-                        self.account_num, # 계좌번호
-                        1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                        stock_code, # 종목코드
-                        # qty, # 주문 수량
-                        self.buy_qty, # 주문 수량
-                        "", # 주문 가격, 시장가의 경우 공백
-                        "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                        "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+            else:
+                매입가 = self.stock_dict[stock_code].get("매입가", current_price)
+                분할_매수 = current_price <= 매입가 * self.loss
+                if 분할_매수:
+                    divide = self.stock_dict[stock_code].get('분할매수', 0)
+                    if divide == 0:
+                        print(f"분할 매수 조건 충족하지만 추가 매수는 제한됨: {stock_code}")
+                        return
 
-                )    
-                QTest.qWait(200)
-                self.order_screen.update({stock_code:화면번호})
-                # self.tr_req_queue.put(
-                #     [
-                #         self.send_order, 
-                #         "시장가매수주문", # 사용자 구분명
-                #         화면번호, # 화면번호
-                #         self.account_num, # 계좌번호
-                #         1, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                #         stock_code, # 종목코드
-                #         # qty, # 주문 수량
-                #         self.buy_qty, # 주문 수량
-                #         "", # 주문 가격, 시장가의 경우 공백
-                #         "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                #         "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+        # 7. 주문 실행
+        order_result = self.send_order(
+            "시장가매수주문",  # 사용자 구분명
+            화면번호,          # 화면번호
+            self.account_num,  # 계좌번호
+            1,                 # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+            stock_code,        # 종목코드
+            self.buy_qty,      # 주문 수량
+            "",                # 주문 가격, 시장가의 경우 공백
+            "03",              # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+            ""                 # 주문번호, 정정 주문이 아닌 경우 공백
+        )
 
-                #     ]
-                # )   
+        # 8. 주문 결과 처리
+        if order_result == 0:  # 성공 반환값으로 0 가정
+            print(f"매수 성공: 종목코드={stock_code}, 수량={self.buy_qty}")
+            self.order_screen.update({stock_code: 화면번호})
+        else:
+            print(f"매수 실패: 종목코드={stock_code}, 오류코드={order_result}")
+            self.order_error_log.append({
+                "종목코드": stock_code,
+                "수량": self.buy_qty,
+                "오류코드": order_result,
+                "시간": self.now_time.strftime("%Y-%m-%d %H:%M:%S")
+            })
+
+        # 9. 대기 시간 추가
+        QTest.qWait(200)
+        
 
     def stock_sell(self):
+        """
+        보유 주식의 매도 처리 로직. 시간대에 따라 매도 조건이 다름.
+        """
         self.now_time = datetime.datetime.now()
-        self.t_9, self.t_start,self.t_sell, self.t_exit, self.t_ai = self.gen_time()
-        if self.t_9 < self.now_time < self.t_sell:  # 9 ~ 3:15 : 일괄 매도
-            for stock_code in list(self.stock_dict.keys()):
-                if stock_code not in self.stock_dict:
-                    continue
+        self.t_9, self.t_start, self.t_sell, self.t_exit, self.t_ai = self.gen_time()
 
-                stock_name = self.get_company_name(stock_code)
-                화면번호 = self.stock_dict[stock_code].get("화면번호", "5000")                
-                보유수량 = self.stock_dict[stock_code].get("보유수량", 0)
-                매입가 = self.stock_dict[stock_code].get("매입가", 현재가)
-                현재가 = self.get_current_price(stock_code)
-                고가 = self.stock_dict[stock_code].get("고가", 현재가)
-                고가 = max(현재가, 고가) if 고가 else 현재가
-                self.stock_dict[stock_code].update({"고가":고가})
-                손실_조건 = 현재가 <= 매입가 * 0.985
-                수익_조건 = 현재가 > 매입가 * 1.01
-                print(현재가,매입가)
-                # if 상태 == '매입' and  보유수량 > 0 and (현재가 <= 매입가 * 0.970 or 현재가 <= 고가 * 0.985):
-                if 손실_조건 or 수익_조건:
-                    logger.info(f"시장가매도[{self.now_time}] == {stock_code} {stock_name} {보유수량} {매입가}  {현재가} ==")
-                    if 보유수량 > 0:
-                        self.send_order( 
-                                "시장가매도주문", # 사용자 구분명
-                                화면번호, # 화면번호
-                                self.account_num, # 계좌번호
-                                2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                                stock_code, # 종목코드
-                                화면번호, # 주문 수량
-                                "", # 주문 가격, 시장가의 경우 공백
-                                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+        # 1. 매도 가능 시간 확인
+        if self.t_9 < self.now_time < self.t_sell:  # 9:00 ~ 15:15: 조건부 매도
+            self._conditional_sell()
+        elif self.t_sell < self.now_time < self.t_exit:  # 15:15 ~ 15:20: 일괄 매도
+            self._force_sell()
+        elif self.t_exit < self.now_time:  # 15:20 이후: 프로그램 종료
+            self._close_program()
 
-                            )      
-                        QTest.qWait(200)
-                
-        elif self.t_sell < self.now_time < self.t_exit:  # PM 03:15 ~ PM 03:20 : 일괄 매도
-            for stock_code in self.stock_dict.keys():
-                self.send_order( 
-                "시장가매도주문", # 사용자 구분명
-                self.stock_dict[stock_code].get("화면번호","5000"), # 화면번호
-                self.account_num, # 계좌번호
-                2, # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-                stock_code, # 종목코드
-                self.stock_dict[stock_code].get("보유수량", None), # 주문 수량
-                "", # 주문 가격, 시장가의 경우 공백
-                "03", # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-                "", # 주문번호 (정정 주문의 경우 사용, 나머진 공백)
+    def _conditional_sell(self):
+        """ 조건부 매도 로직: 손실 또는 수익 조건에 따라 매도 """
+        for stock_code in list(self.stock_dict.keys()):
+            stock_data = self.stock_dict.get(stock_code, {})
+            if not stock_data:
+                continue
 
-            )      
-        elif self.t_exit < self.now_time:  # PM 03:20 ~ :프로그램 종료
-            logger.info(f"오늘 장 마감~~ 프로그램을 종료 합니다.")
-            sys.exit()
+            stock_name = self.get_company_name(stock_code)
+            화면번호 = stock_data.get("화면번호", "5000")
+            보유수량 = stock_data.get("보유수량", 0)
+            매입가 = stock_data.get("매입가", None)
+            현재가 = self.get_current_price(stock_code)
+            if 매입가 is None or 현재가 is None:
+                print(f"매입가 또는 현재가가 유효하지 않습니다: {stock_code}")
+                continue
+
+            고가 = stock_data.get("고가", 현재가)
+            고가 = max(현재가, 고가)
+            self.stock_dict[stock_code].update({"고가": 고가})
+
+            손실_조건 = 현재가 <= 매입가 * self.loss
+            수익_조건 = 현재가 > 매입가 * self.gain
+
+            print(f"[조건부 매도] 종목: {stock_code}, 현재가: {현재가}, 매입가: {매입가}")
+            if 손실_조건 or 수익_조건:
+                if 보유수량 > 0:
+                    logger.info(f"[시장가 매도] 종목: {stock_code}, 수량: {보유수량}, 현재가: {현재가}, 매입가: {매입가}")
+                    self._send_sell_order(stock_code, 화면번호, 보유수량)
+                else:
+                    print(f"[매도 불가] 보유 수량이 없습니다: {stock_code}")
+
+    def _force_sell(self):
+        """ 일괄 매도 로직: 시간 종료 직전 모든 종목 매도 """
+        for stock_code in list(self.stock_dict.keys()):
+            stock_data = self.stock_dict.get(stock_code, {})
+            화면번호 = stock_data.get("화면번호", "5000")
+            보유수량 = stock_data.get("보유수량", 0)
+
+            if 보유수량 > 0:
+                logger.info(f"[일괄 매도] 종목: {stock_code}, 수량: {보유수량}")
+                self._send_sell_order(stock_code, 화면번호, 보유수량)
+            else:
+                print(f"[일괄 매도 불가] 보유 수량이 없습니다: {stock_code}")
+
+    def _close_program(self):
+        """ 프로그램 종료 """
+        logger.info("오늘 장 마감. 프로그램을 종료합니다.")
+        sys.exit()
+
+    def _send_sell_order(self, stock_code, 화면번호, 보유수량):
+        """ 매도 주문 처리 """
+        order_result = self.send_order(
+            "시장가매도주문",  # 사용자 구분명
+            화면번호,          # 화면번호
+            self.account_num,  # 계좌번호
+            2,                 # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
+            stock_code,        # 종목코드
+            보유수량,          # 주문 수량
+            "",                # 주문 가격, 시장가의 경우 공백
+            "03",              # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+            ""                 # 주문번호, 정정 주문이 아닌 경우 공백
+        )
+        if order_result == 0:  # 성공 반환값으로 0 가정
+            print(f"[매도 성공] 종목: {stock_code}, 수량: {보유수량}")
+            QTest.qWait(200)
+        else:
+            print(f"[매도 실패] 종목: {stock_code}, 오류코드: {order_result}")
+            self.order_error_log.append({
+                "종목코드": stock_code,
+                "수량": 보유수량,
+                "오류코드": order_result,
+                "시간": self.now_time.strftime("%Y-%m-%d %H:%M:%S")
+            })
+
         # if self._is_check_tr_req_condition() and not self.tr_req_queue.empty():
         #     request_func, *func_args = self.tr_req_queue.get()
         #     # logger.info(f"Executing TR request function: {request_func}")
         #     request_func(*func_args) if func_args else request_func()
         #     self.last_tr_send_times.append(self.now_time)
-            
+           
 if __name__ == "__main__":
     app = QApplication(sys.argv)            
     kiwoom_api = KiwoomAPI()
