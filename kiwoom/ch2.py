@@ -615,13 +615,15 @@ class KiwoomAPI(QMainWindow):
                 self.cal_cnt -= 1
             else:
                 매입가 = self.stock_dict[stock_code].get("매입가", current_price)
-                분할_매수 = current_price <= 매입가 * self.loss
+                분할_매수 = current_price <= 매입가 * (self.loss + 0.005)
                 if 분할_매수:
                     divide = self.stock_dict[stock_code].get('분할매수', 0)
                     if divide == 0:
                         print(f"분할 매수 조건 충족하지만 추가 매수는 제한됨: {stock_code}")
                         return
-
+        else:
+            return
+        
         # 7. 주문 실행
         order_result = self.send_order(
             "시장가매수주문",  # 사용자 구분명
