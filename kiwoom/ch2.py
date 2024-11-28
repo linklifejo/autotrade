@@ -30,7 +30,7 @@ class KiwoomAPI(QMainWindow):
         self.max_buy_cost = 20000
         self.total_buy_money = 0
         self.buy_money = 0
-        self.max_buy_cnt = 2
+        self.max_buy_cnt = 4
         self.buy_cnt = 0
         self.buy_divide = 2
         self.cal_cnt = 0
@@ -40,7 +40,7 @@ class KiwoomAPI(QMainWindow):
         self.stop_loss_threshold = -1.5
         self.realtime_data_scrnum = 5000
         self.gain = 1.01
-        self.loss = 0.985
+        self.loss = 0.995
         self.tr_reg_scrnum = 5150
         self.max_send_per_sec = 4 # 초당 TR 호출 최대 4번
         self.max_send_per_minute = 55 # 분당 TR 호출 최대 55번
@@ -74,9 +74,6 @@ class KiwoomAPI(QMainWindow):
         t_exit = t_now.replace(hour=15, minute=20, second=0,microsecond=0)
         return t_9,t_start,t_sell,t_exit,t_ai
 
-    def get_current_price(self,code):
-        data = int(self.kiwoom.GetMasterLastPrice(code).strip().replace('-',''))  # 현재가 가져오기
-        return data
     def get_company_name(self,code):
         company_name = self.kiwoom.GetMasterCodeName(code).strip()  # 업체명 가져오기
         return company_name
@@ -99,9 +96,10 @@ class KiwoomAPI(QMainWindow):
         self.get_account_num()
         self.request_opw00018() 
         self.kiwoom.dynamicCall("GetConditionLoad()") 
-        self.stock_sell_timer.start(20) # 0.2초마다 sell   
+        # self.stock_sell_timer.start(200) # 0.2초마다 sell   
         self.unfinished_orders.start(500) # 0.5초마다 order_buied cancel   
-        # self.req_upside_info_timer.start(3000)        
+        # self.req_upside_info_timer.start(3000)   
+        #      
         
     def get_account_num(self):
         account_nums = str(self.kiwoom.dynamicCall("GetLoginInfo(QString)", ["ACCNO"]).rstrip(';'))
@@ -135,7 +133,7 @@ class KiwoomAPI(QMainWindow):
         self._set_input_value("비밀번호입력대체구분", "00")
         self._set_input_value("조회구분", "2")
         self._comm_rq_data("opw00018_req", "opw00018", 0, self._get_tr_req_screen_num())
-        self.event_loop.exec_()
+        # self.event_loop.exec_()
 
 
     def _receive_tr_data(self, screen_no, rqname, trcode, record_name, next, unused1, unused2, unused3, unused4):
@@ -286,12 +284,11 @@ class KiwoomAPI(QMainWindow):
         # logger.info(f"Received real condition, {strCode}, {strType}, {strConditionName}, {strConditionIndex}")
         if strType == "I":
             self.register_code_to_realtime_list(strCode)
-            self.stock_buy(strCode)
                 
 
-        elif strType == "D" and strCode not in self.stock_dict.keys():
-            if strCode not in self.stock_dict:
-                self.unregister_code_to_realtime_list(strCode)
+        # elif strType == "D" and strCode not in self.stock_dict.keys():
+        #     if strCode not in self.stock_dict:
+        #         self.unregister_code_to_realtime_list(strCode)
 
     def _receive_tr_condition(self, scrNum, strCodeList, strConditionName, nIndex, nNext):
         # logger.info(f"Received TR Condition, strCodeList: {strCodeList}, strConditionName: {strConditionName}," 
@@ -299,7 +296,6 @@ class KiwoomAPI(QMainWindow):
         for stock_code in strCodeList.split(';'):
             if len(stock_code) == 6:
                 self.register_code_to_realtime_list(stock_code) 
-                self.stock_buy(stock_code)
 
     def set_real(self, scrNum, strCodeList, strFidList, strRealType):
         self.kiwoom.dynamicCall("SetRealReg(QString, QString, QString, QString)", scrNum, strCodeList, strFidList, strRealType)   
@@ -359,13 +355,17 @@ class KiwoomAPI(QMainWindow):
             현재가 = int(self._get_comn_realdata(sRealType, 10).replace('-', '')) # 현재가
             등락률 = float(self._get_comn_realdata(sRealType, 12))     
             체결시간 = self._get_comn_realdata(sRealType, 20)
+            if sJongmokCode not in self.stock_dict.keys():
+                self.stock_buy(sJongmokCode, 현재가)
             if sJongmokCode in self.stock_dict.keys():
-                stock_name = self.get_company_name(sJongmokCode)
-                보유수량 = self.stock_dict[sJongmokCode].get("보유수량", 0)
-                고가 = self.stock_dict[sJongmokCode].get("고가", 현재가)
-                매입가 = self.stock_dict[sJongmokCode].get("매입가", 현재가)
-                고가 = max(현재가, 고가) if 고가 else 현재가
-                self.stock_dict[sJongmokCode].update({"고가":고가})
+                self.stock_sell(sJongmokCode, 현재가)
+            # stock_name = self.get_company_name(sJongmokCode)
+            # 보유수량 = self.stock_dict[sJongmokCode].get("보유수량", 0)
+            # 고가 = self.stock_dict[sJongmokCode].get("고가", 현재가)
+            # 매입가 = self.stock_dict[sJongmokCode].get("매입가", 현재가)
+            # 고가 = max(현재가, 고가) if 고가 else 현재가
+            # self.stock_dict[sJongmokCode].update({"고가":고가})
+
                 # if 보유수량 > 0:
                 #     # 매입가 기준 손실 조건
                 #     손실_조건 = 현재가 <= 매입가 * 0.995
@@ -477,14 +477,13 @@ class KiwoomAPI(QMainWindow):
             )
 
             if 주문구분 == '매수' and 체결수량 > 0:
-                self.stock_dict.update({종목코드:{}})
+                if 종목코드 not in self.stock_dict.keys():
+                    self.stock_dict.update({종목코드:{}})
+                    self.stock_dict[종목코드][ "매수횟수"] = 0
+                    self.stock_dict[종목코드][ "매수완료"] = False
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
                 self.stock_dict[종목코드][ "종목명"] = 종목명
-                divide = self.stock_dict[종목코드].get('분할매수',self.buy_divide)
-                self.stock_dict[종목코드].update({'분할매수':divide - 1})
-
-
 
             if 주문구분 in ['매도','매도정정']: 
                 self.unfinished_order_num_to_info_dict.update({주문번호 :{}})
@@ -500,6 +499,7 @@ class KiwoomAPI(QMainWindow):
                 self.stock_dict.pop(종목코드,'미존재')
             if 미체결수량 == 0:
                 self.unfinished_order_num_to_info_dict.pop(주문번호,None)
+            # self.request_opw00018() 
 
         if sGubun == "1":
             계좌번호 = self.get_chejandata(9201).strip()   
@@ -515,6 +515,7 @@ class KiwoomAPI(QMainWindow):
                 f"현재가: {현재가}, 매입단가: {매입단가}, "
                 f"평가손익: {평가손익}, 수익률: {수익률}"
             )  
+        
 
     def receive_msg(self, sScrno, sRQName, sTrcode, sMsg):
         os.system("cls") 
@@ -527,7 +528,7 @@ class KiwoomAPI(QMainWindow):
             os.execl(python, python, *sys.argv)
 
     def check_unfinished_orders(self):
-                  
+        self.stock_sell()          
         pop_list = []   
         for order_num in self.unfinished_order_num_to_info_dict.keys():
             주문번호 = order_num
@@ -580,24 +581,18 @@ class KiwoomAPI(QMainWindow):
         for order_num in pop_list:
             self.unfinished_order_num_to_info_dict.pop(order_num, None)
 
-    def stock_buy(self, stock_code):
+    def stock_buy(self, stock_code, current_price):
         self.now_time = datetime.datetime.now()
         self.t_9, self.t_start, self.t_sell, self.t_exit, self.t_ai = self.gen_time()
 
         # 1. 매수 가능 시간 확인
         if not (self.t_9 < self.now_time < self.t_sell):
-            print("매수 가능한 시간이 아닙니다.")
-            return
-
-        # 2. 현재가 가져오기
-        current_price = self.get_current_price(stock_code)
-        if current_price is None:
-            print(f"현재가를 가져오지 못했습니다: {stock_code}")
+            # print("매수 가능한 시간이 아닙니다.")
             return
 
         # 3. 매수가격 범위 확인
         if not (self.min_buy_cost <= current_price <= self.max_buy_cost):
-            print(f"매수가격 범위를 벗어남: 현재가={current_price}")
+            # print(f"매수가격 범위를 벗어남: 현재가={current_price}")
             return
 
         # 4. 종목 관리 여부 확인
@@ -608,22 +603,33 @@ class KiwoomAPI(QMainWindow):
         divide_money = self.buy_money / self.buy_divide
         self.buy_qty = int(divide_money / current_price)
         화면번호 = self._get_realtime_data_screen_num()
-
+        # 매수 조건 설정
+        MAX_BUY_COUNT = 2  # 한 종목당 최대 매수 횟수
+        BUY_THRESHOLD = 0.02  # 매입단가 대비 2% 하락 조건
         # 6. 분할 매수 및 추가 매수 조건 확인
         if self.cal_cnt > 0:
             if not isCode:
                 self.cal_cnt -= 1
-            else:
-                매입가 = self.stock_dict[stock_code].get("매입가", current_price)
-                분할_매수 = current_price <= 매입가 * (self.loss + 0.005)
-                if 분할_매수:
-                    divide = self.stock_dict[stock_code].get('분할매수', 0)
-                    if divide == 0:
-                        print(f"분할 매수 조건 충족하지만 추가 매수는 제한됨: {stock_code}")
-                        return
         else:
-            return
-        
+            if stock_code in self.stock_dict.keys():
+                if self.stock_dict[stock_code].get('매수완료') == True:
+                    return
+
+                매입가 = self.stock_dict[stock_code].get('매입가')
+                매입횟수 = self.stock_dict[stock_code].get('매입횟수')
+
+                # 매수 조건: 현재가가 매입단가 대비 2% 하락하고 매수 횟수가 2회 미만
+                if current_price <= 매입가 * (1 - BUY_THRESHOLD) and 매입횟수 < MAX_BUY_COUNT:
+                    # 매수 실행
+                    print(f"종목 {stock_code} 매수 (현재가: {current_price}, 매수 횟수: {매입횟수 + 1})")
+                    self.stock_dict[stock_code].update({'매수횟수': 매입횟수 + 1})
+
+                    # 매수 횟수가 최대 횟수에 도달하면 매수 완료로 설정
+                    if 매입횟수 == MAX_BUY_COUNT:
+                        self.stock_dict[stock_code].update({'매수완료': True})
+                else:
+                    return
+
         # 7. 주문 실행
         order_result = self.send_order(
             "시장가매수주문",  # 사용자 구분명
@@ -654,7 +660,7 @@ class KiwoomAPI(QMainWindow):
         QTest.qWait(200)
         
 
-    def stock_sell(self):
+    def stock_sell(self,stock_code='',current_price=0):
         """
         보유 주식의 매도 처리 로직. 시간대에 따라 매도 조건이 다름.
         """
@@ -663,42 +669,35 @@ class KiwoomAPI(QMainWindow):
 
         # 1. 매도 가능 시간 확인
         if self.t_9 < self.now_time < self.t_sell:  # 9:00 ~ 15:15: 조건부 매도
-            self._conditional_sell()
+            self._conditional_sell(stock_code, current_price)
         elif self.t_sell < self.now_time < self.t_exit:  # 15:15 ~ 15:20: 일괄 매도
             self._force_sell()
         elif self.t_exit < self.now_time:  # 15:20 이후: 프로그램 종료
             self._close_program()
 
-    def _conditional_sell(self):
+    def _conditional_sell(self,stock_code, 현재가):
         """ 조건부 매도 로직: 손실 또는 수익 조건에 따라 매도 """
-        for stock_code in list(self.stock_dict.keys()):
-            stock_data = self.stock_dict.get(stock_code, {})
-            if not stock_data:
-                continue
+        stock_name = self.get_company_name(stock_code)
+        화면번호 = self.stock_dict[stock_code].get("화면번호", "5000")
+        보유수량 = self.stock_dict[stock_code].get("보유수량", 0)
+        매입가 = self.stock_dict[stock_code].get("매입가", None)
+        if 매입가 is None or 현재가 is None:
+            print(f"매입가 또는 현재가가 유효하지 않습니다: {stock_code}")
 
-            stock_name = self.get_company_name(stock_code)
-            화면번호 = stock_data.get("화면번호", "5000")
-            보유수량 = stock_data.get("보유수량", 0)
-            매입가 = stock_data.get("매입가", None)
-            현재가 = self.get_current_price(stock_code)
-            if 매입가 is None or 현재가 is None:
-                print(f"매입가 또는 현재가가 유효하지 않습니다: {stock_code}")
-                continue
+        고가 = self.stock_dict[stock_code].get("고가", 현재가)
+        고가 = max(현재가, 고가)
+        self.stock_dict[stock_code].update({"고가": 고가})
 
-            고가 = stock_data.get("고가", 현재가)
-            고가 = max(현재가, 고가)
-            self.stock_dict[stock_code].update({"고가": 고가})
+        손실_조건 = 현재가 <= 매입가 * self.loss
+        수익_조건 = 현재가 > 매입가 * self.gain
 
-            손실_조건 = 현재가 <= 매입가 * self.loss
-            수익_조건 = 현재가 > 매입가 * self.gain
-
-            print(f"[조건부 매도] 종목: {stock_code}, 현재가: {현재가}, 매입가: {매입가}")
-            if 손실_조건 or 수익_조건:
-                if 보유수량 > 0:
-                    logger.info(f"[시장가 매도] 종목: {stock_code}, 수량: {보유수량}, 현재가: {현재가}, 매입가: {매입가}")
-                    self._send_sell_order(stock_code, 화면번호, 보유수량)
-                else:
-                    print(f"[매도 불가] 보유 수량이 없습니다: {stock_code}")
+        # logger.info(f"[조건부 매도] 종목: {stock_code}, 현재가: {현재가}, 매입가: {매입가}")
+        if 손실_조건 or 수익_조건:
+            if 보유수량 > 0:
+                # logger.info(f"[시장가 매도] 종목: {stock_code}, 수량: {보유수량}, 현재가: {현재가}, 매입가: {매입가}")
+                self._send_sell_order(stock_code, 화면번호, 보유수량)
+            else:
+                print(f"[매도 불가] 보유 수량이 없습니다: {stock_code}")
 
     def _force_sell(self):
         """ 일괄 매도 로직: 시간 종료 직전 모든 종목 매도 """
