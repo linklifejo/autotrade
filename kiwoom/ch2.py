@@ -23,9 +23,10 @@ class KiwoomAPI(QMainWindow):
 
         self.event_loop = QEventLoop()
         self.GAIN_PERCENT = 1.01
-        self.LOSS_PERCENT = 0.01 # 매입단가 대비 2% 하락 조건
-        self.MAX_BUY_STOCK = 1 # 최대 보유 종목 수
-        self.MAX_BUY_DIV = 4  # 한 종목당 최대 매수 횟수
+        self.LOSS_PERCENT = 0.985 
+        self.BUY_DIV_PERCENT = 0.990 
+        self.MAX_BUY_STOCK = 4 # 최대 보유 종목 수
+        self.MAX_BUY_DIV = 4
         self.MIN_BUY_COST = 1000
         self.MAX_BUY_COST = 20000
         self.order_screen = {}
@@ -354,11 +355,11 @@ class KiwoomAPI(QMainWindow):
             현재가 = int(self._get_comn_realdata(sRealType, 10).replace('-', '')) # 현재가
             등락률 = float(self._get_comn_realdata(sRealType, 12))     
             체결시간 = self._get_comn_realdata(sRealType, 20)
-
-            if sJongmokCode in self.stock_dict.keys():
+            if sJongmokCode in self.stock_dict:
                 self.stock_sell(sJongmokCode, 현재가)
+            else:
+                self.stock_buy(sJongmokCode, 현재가)
 
-            self.stock_buy(sJongmokCode, 현재가)
 
             # stock_name = self.get_company_name(sJongmokCode)
             # 보유수량 = self.stock_dict[sJongmokCode].get("보유수량", 0)
@@ -480,10 +481,6 @@ class KiwoomAPI(QMainWindow):
             if 주문구분 == '매수' and 체결수량 > 0:
                 if 종목코드 not in self.stock_dict.keys():
                     self.stock_dict.update({종목코드:{}})
-                    매수횟수 = self.MAX_BUY_DIV
-                    self.stock_dict[종목코드][ "매수완료"] = False
-
-                self.stock_dict[종목코드][ "매수횟수"] = 매수횟수 - 1
                 self.stock_dict[종목코드][ "보유수량"] = 체결수량
                 self.stock_dict[종목코드][ "매입가"] = 체결가격
                 self.stock_dict[종목코드][ "종목명"] = 종목명
@@ -497,7 +494,6 @@ class KiwoomAPI(QMainWindow):
                 self.unfinished_order_num_to_info_dict[주문번호].update({"화면번호": self.order_screen.get(종목코드,"5000")}) 
                 
             if 주문구분 == '매도' and 미체결수량 == 0:
-                self.cal_cnt += 1
                 del self.stock_dict[종목코드]
 
                 self.stock_dict.pop(종목코드,'미존재')
@@ -610,38 +606,41 @@ class KiwoomAPI(QMainWindow):
 
         # 6. 분할 매수 및 추가 매수 조건 확인
         if isCode == True:
-            매입가 = self.stock_dict[stock_code].get('매입가')
-            매수횟수 = self.stock_dict[stock_code].get('매수횟수',self.MAX_BUY_DIV) 
-            
-            if 매수횟수 == 0:
-                return
-            
-            # 매수 조건: 현재가가 매입단가 대비 2% 하락하고 매수 횟수가 2회 미만
-            if current_price <= 매입가 * (1 - (self.LOSS_PERCENT-0.01)):
-                pass
+            if self.stock_dict[stock_code]['div_count'] > 0:
+                매입가 = self.stock_dict[stock_code].get('매입가',current_price)
+                if current_price <= 매입가 * self.BUY_DIV_PERCENT == True:
+                    pass
             else:
                 return
         else:
             if self.cal_cnt > 0:
-                self.cal_cnt -= 1
+                pass
+            else:
+                return
+
 
         # 7. 주문 실행
-        print(f"종목 {stock_code} 매수 (현재가: {current_price}, 매수 횟수: {매수횟수})")
+        # print(f"종목 {stock_code} 매수 (현재가: {current_price}, 매수 횟수: {매수횟수})")
+        QTest.qWait(250)
         order_result = self.send_order(
-            "시장가매수주문",  # 사용자 구분명
+            "지정가매수주문",  # 사용자 구분명
             화면번호,          # 화면번호
             self.account_num,  # 계좌번호
             1,                 # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
             stock_code,        # 종목코드
             self.buy_qty,      # 주문 수량
-            "",                # 주문 가격, 시장가의 경우 공백
-            "03",              # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
+            current_price,                # 주문 가격, 시장가의 경우 공백
+            "00",              # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
             ""                 # 주문번호, 정정 주문이 아닌 경우 공백
         )
-        QTest.qWait(250)
 
         # 8. 주문 결과 처리
         if order_result == 0:  # 성공 반환값으로 0 가정
+            if isCode == True:
+                self.stock_dict[stock_code]['div_count'] -= 1
+            else:
+                self.cal_cnt -= 1
+                self.stock_dict[stock_code]['div_count'] = self.MAX_BUY_DIV - 1
             print(f"매수 성공: 종목코드={stock_code}, 수량={self.buy_qty}")
             self.order_screen.update({stock_code: 화면번호})
         else:
@@ -653,7 +652,7 @@ class KiwoomAPI(QMainWindow):
                 "시간": self.now_time.strftime("%Y-%m-%d %H:%M:%S")
             })
 
-        # 9. 대기 시간 추가
+    # 9. 대기 시간 추가
         
 
     def stock_sell(self,stock_code='',current_price=0):
@@ -687,12 +686,12 @@ class KiwoomAPI(QMainWindow):
 
             손실_조건 = 현재가 <= 매입가 * self.LOSS_PERCENT
             수익_조건 = 현재가 >= 매입가 * self.GAIN_PERCENT
-
+            logger.info(f'{stock_name},{현재가},{매입가},{손실_조건}')
             # logger.info(f"[조건부 매도] 종목: {stock_code}, 현재가: {현재가}, 매입가: {매입가}")
             if 손실_조건 or 수익_조건:
                 if 보유수량 > 0:
-                    # logger.info(f"[시장가 매도] 종목: {stock_code}, 수량: {보유수량}, 현재가: {현재가}, 매입가: {매입가}")
                     self._send_sell_order(stock_code, 화면번호, 보유수량)
+                    # logger.info(f"[시장가 매도] 종목: {stock_code}, 수량: {보유수량}, 현재가: {현재가}, 매입가: {매입가}")
                 else:
                     print(f"[매도 불가] 보유 수량이 없습니다: {stock_code}")
 
@@ -728,6 +727,7 @@ class KiwoomAPI(QMainWindow):
             ""                 # 주문번호, 정정 주문이 아닌 경우 공백
         )
         if order_result == 0:  # 성공 반환값으로 0 가정
+            self.cal_cnt += 1
             print(f"[매도 성공] 종목: {stock_code}, 수량: {보유수량}")
             QTest.qWait(200)
         else:
