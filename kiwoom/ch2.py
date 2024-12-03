@@ -650,11 +650,12 @@ class KiwoomAPI(QMainWindow):
                 # 신규 매수 시
                 self.cal_cnt -= 1
                 self.stock_dict[stock_code] = {
-                    "div_count": self.MAX_BUY_DIV - 1,
-                    "매입가": current_price
+                    "div_count": self.MAX_BUY_DIV - 1
                 }
             print(f"[{stock_code}] 매수 성공: 수량={buy_quantity}, 잔여 매수 횟수={self.stock_dict[stock_code]['div_count']}")
             self.order_screen[stock_code] = screen_num
+            
+
         else:
             # 주문 실패 처리
             print(f"[{stock_code}] 매수 실패: 오류코드={order_result}")
@@ -664,7 +665,7 @@ class KiwoomAPI(QMainWindow):
                 "오류코드": order_result,
                 "시간": self.now_time.strftime("%Y-%m-%d %H:%M:%S")
             })
-
+        QTest.qWait(200)
         
 
     def stock_sell(self,stock_code='',current_price=0):
