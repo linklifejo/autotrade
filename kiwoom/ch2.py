@@ -23,7 +23,7 @@ class KiwoomAPI(QMainWindow):
 
         self.event_loop = QEventLoop()
         self.GAIN_PERCENT = 1.01
-        self.LOSS_PERCENT = 0.985 
+        self.LOSS_PERCENT = 0.995 
         self.BUY_DIV_PERCENT = 0.990 
         self.MAX_BUY_STOCK = 4 # 최대 보유 종목 수
         self.MAX_BUY_DIV = 4
@@ -582,77 +582,89 @@ class KiwoomAPI(QMainWindow):
             self.unfinished_order_num_to_info_dict.pop(order_num, None)
 
     def stock_buy(self, stock_code, current_price):
+        """
+        종목 매수 로직 (분할 매수 및 추가 매수 포함)
+        """
         self.now_time = datetime.datetime.now()
         self.t_9, self.t_start, self.t_sell, self.t_exit, self.t_ai = self.gen_time()
 
         # 1. 매수 가능 시간 확인
         if not (self.t_9 < self.now_time < self.t_sell):
-            # print("매수 가능한 시간이 아닙니다.")
+            print(f"[{stock_code}] 매수 가능 시간이 아닙니다.")
             return
 
-        # 3. 매수가격 범위 확인
+        # 2. 매수가격 범위 확인
         if not (self.MIN_BUY_COST <= current_price <= self.MAX_BUY_COST):
-            # print(f"매수가격 범위를 벗어남: 현재가={current_price}")
+            print(f"[{stock_code}] 매수가격 범위를 벗어남: 현재가={current_price}")
             return
 
-        # 4. 종목 관리 여부 확인
-        isCode = stock_code in self.stock_dict
+        # 3. 종목 관리 여부 확인
+        is_managed_stock = stock_code in self.stock_dict
 
-        # 5. 매수 금액 및 수량 계산
-        divide_money = self.buy_money / self.MAX_BUY_DIV
-        self.buy_qty = int(divide_money / current_price)
-        화면번호 = self._get_realtime_data_screen_num()
-        # 매수 조건 설정
+        # 4. 매수 금액 및 수량 계산
+        divide_money = self.buy_money / self.MAX_BUY_DIV  # 종목당 분할 매수 금액
+        buy_quantity = int(divide_money / current_price)  # 매수 수량 계산
+        if buy_quantity <= 0:
+            print(f"[{stock_code}] 매수 수량이 0 이하입니다.")
+            return
 
-        # 6. 분할 매수 및 추가 매수 조건 확인
-        if isCode == True:
-            if self.stock_dict[stock_code]['div_count'] > 0:
-                매입가 = self.stock_dict[stock_code].get('매입가',current_price)
-                if current_price <= 매입가 * self.BUY_DIV_PERCENT == True:
-                    pass
+        screen_num = self._get_realtime_data_screen_num()  # 화면번호 생성
+
+        # 5. 추가 매수 및 분할 매수 조건 확인
+        if is_managed_stock:
+            # 추가 매수 조건
+            stock_info = self.stock_dict[stock_code]
+            remaining_div_count = stock_info.get('div_count', 0)
+            avg_price = stock_info.get('매입가', current_price)
+
+            if remaining_div_count > 0 and current_price <= avg_price * self.BUY_DIV_PERCENT:
+                print(f"[{stock_code}] 추가 매수 진행: 현재가={current_price}, 평균가={avg_price}")
             else:
+                print(f"[{stock_code}] 추가 매수 조건 미충족")
                 return
         else:
-            if self.cal_cnt > 0:
-                pass
-            else:
+            # 신규 매수 조건
+            if self.cal_cnt <= 0:
+                print(f"[{stock_code}] 신규 매수 가능 종목 수 초과")
                 return
 
-
-        # 7. 주문 실행
-        # print(f"종목 {stock_code} 매수 (현재가: {current_price}, 매수 횟수: {매수횟수})")
-        QTest.qWait(250)
+        # 6. 주문 실행
         order_result = self.send_order(
-            "지정가매수주문",  # 사용자 구분명
-            화면번호,          # 화면번호
-            self.account_num,  # 계좌번호
-            1,                 # 주문유형, 1:신규매수, 2:신규매도, 3:매수취소, 4:매도취소, 5:매수정정, 6:매도정정
-            stock_code,        # 종목코드
-            self.buy_qty,      # 주문 수량
-            current_price,                # 주문 가격, 시장가의 경우 공백
-            "00",              # 주문 유형, 00: 지정가, 03: 시장가, 05: 조건부지정가, 06: 최유리지정가, 07: 최우선지정가 등
-            ""                 # 주문번호, 정정 주문이 아닌 경우 공백
+            "지정가매수주문",
+            screen_num,
+            self.account_num,
+            1,  # 주문유형: 신규매수
+            stock_code,
+            buy_quantity,
+            current_price,
+            "00",  # 지정가 주문
+            ""
         )
 
-        # 8. 주문 결과 처리
-        if order_result == 0:  # 성공 반환값으로 0 가정
-            if isCode == True:
+        # 7. 주문 결과 처리
+        if order_result == 0:  # 주문 성공
+            if is_managed_stock:
+                # 추가 매수 시
                 self.stock_dict[stock_code]['div_count'] -= 1
             else:
+                # 신규 매수 시
                 self.cal_cnt -= 1
-                self.stock_dict[stock_code]['div_count'] = self.MAX_BUY_DIV - 1
-            print(f"매수 성공: 종목코드={stock_code}, 수량={self.buy_qty}")
-            self.order_screen.update({stock_code: 화면번호})
+                self.stock_dict[stock_code] = {
+                    "div_count": self.MAX_BUY_DIV - 1,
+                    "매입가": current_price
+                }
+            print(f"[{stock_code}] 매수 성공: 수량={buy_quantity}, 잔여 매수 횟수={self.stock_dict[stock_code]['div_count']}")
+            self.order_screen[stock_code] = screen_num
         else:
-            print(f"매수 실패: 종목코드={stock_code}, 오류코드={order_result}")
+            # 주문 실패 처리
+            print(f"[{stock_code}] 매수 실패: 오류코드={order_result}")
             self.order_error_log.append({
                 "종목코드": stock_code,
-                "수량": self.buy_qty,
+                "수량": buy_quantity,
                 "오류코드": order_result,
                 "시간": self.now_time.strftime("%Y-%m-%d %H:%M:%S")
             })
 
-    # 9. 대기 시간 추가
         
 
     def stock_sell(self,stock_code='',current_price=0):
