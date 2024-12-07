@@ -95,7 +95,6 @@ class KiwoomAPI(QMainWindow):
 
     def _after_login(self):
         self.get_account_num()
-        self.request_opw00018() 
         self.kiwoom.dynamicCall("GetConditionLoad()") 
         # self.stock_sell_timer.start(200) # 0.2초마다 sell   
         self.unfinished_orders.start(500) # 0.5초마다 order_buied cancel   
@@ -615,6 +614,7 @@ class KiwoomAPI(QMainWindow):
         """
         종목 매수 로직 (분할 매수 및 추가 매수 포함)
         """
+        self.request_opw00018() 
         self.now_time = datetime.datetime.now()
         self.t_9, self.t_start, self.t_sell, self.t_exit, self.t_ai = self.gen_time()
 
@@ -709,12 +709,14 @@ class KiwoomAPI(QMainWindow):
         elif self.t_exit < self.now_time:  # 15:20 이후: 프로그램 종료
             self._close_program()
 
-    def _conditional_sell(self,stock_code, 현재가):
+    def _conditional_sell(self,stock_code, current_price):
         """ 조건부 매도 로직: 손실 또는 수익 조건에 따라 매도 """
+        self.request_opw00018() 
         if stock_code in self.stock_dict.keys():
             stock_name = self.get_company_name(stock_code)
             화면번호 = self.stock_dict[stock_code].get("화면번호", "5000")
             보유수량 = self.stock_dict[stock_code].get("보유수량", 0)
+            현재가 = self.stock_dict[stock_code].get("현재가", current_price)
             매입가 = self.stock_dict[stock_code].get("매입가", 현재가)
             if 매입가 is None or 현재가 is None:
                 print(f"매입가 또는 현재가가 유효하지 않습니다: {stock_code}")
