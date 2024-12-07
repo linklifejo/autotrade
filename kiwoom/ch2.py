@@ -5,6 +5,7 @@ import time
 
 import pandas as pd
 from loguru import logger
+from decimal import Decimal
 
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QAxContainer import QAxWidget
@@ -115,6 +116,14 @@ class KiwoomAPI(QMainWindow):
     def get_tmp_high_volatility_info(self):
         self.tr_req_queue.put([self.request_opt10019, "001", True]) 
 
+    def request_opw00018(self):
+        self._set_input_value("계좌번호", self.account_num)
+        self._set_input_value("비밀번호", "")
+        self._set_input_value("비밀번호입력대체구분", "00")
+        self._set_input_value("조회구분", "2")
+        self._comm_rq_data("opw00018_req", "opw00018", 0, self._get_tr_req_screen_num())
+        # self.event_loop.exec_()
+
     def request_opt10019(self, target_market="000", is_upside=True):
         self._set_input_value("시장구분", target_market)
         self._set_input_value("등락구분", "1" if is_upside else "2") # 급등기준
@@ -127,13 +136,7 @@ class KiwoomAPI(QMainWindow):
         self._set_input_value("상하한포함", "0") # 미포함
         self._comm_rq_data("opt10019_req", "opt10019", 0, self._get_tr_req_screen_num())
 
-    def request_opw00018(self):
-        self._set_input_value("계좌번호", self.account_num)
-        self._set_input_value("비밀번호", "")
-        self._set_input_value("비밀번호입력대체구분", "00")
-        self._set_input_value("조회구분", "2")
-        self._comm_rq_data("opw00018_req", "opw00018", 0, self._get_tr_req_screen_num())
-        # self.event_loop.exec_()
+
 
 
     def _receive_tr_data(self, screen_no, rqname, trcode, record_name, next, unused1, unused2, unused3, unused4):
@@ -163,8 +166,15 @@ class KiwoomAPI(QMainWindow):
             print(f"An error occurred: {e}")
             self.total_buy_money = 0  # Optional: handle with a default value or other logic
 
-        self.buy_money = self.balance * 0.5
-        self.buy_money = int(self.buy_money / self.MAX_BUY_STOCK)
+        if self.total_buy_money == 0:
+            self.buy_money = self.balance * 0.5
+            self.buy_money = int(self.buy_money / self.MAX_BUY_STOCK)
+            self.buy_money = int(self.buy_money / self.MAX_BUY_DIV)
+        else:
+            self.buy_money = int(((self.balance * 0.5) - self.total_buy_money) / self.MAX_BUY_STOCK)
+            self.buy_money = self.buy_money / self.MAX_BUY_DIV
+
+            
         self.buy_cnt = int(self._get_repeat_cnt(trcode, rqname))
         self.cal_cnt = self.MAX_BUY_STOCK - self.buy_cnt
         logger.info(f"현재평가잔고: {self.balance:,}원")
@@ -176,13 +186,21 @@ class KiwoomAPI(QMainWindow):
         for i in range(self.buy_cnt):
             종목코드 = self._comm_get_data(trcode, "", rqname, i, "종목번호").replace("A","").strip()
             try:
+                현재가 = int(self._comm_get_data(trcode, "", rqname, i, "현재가"))
+            except ValueError:
+                print("Failed to convert balance data to integer.")
+                현재가 = 0  # Assign a default value or handle it as needed
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                현재가 = 0  # Optional: handle with a default value or other logic    
+            try:
                 보유수량 = int(self._comm_get_data(trcode, "", rqname, i, "보유수량"))
             except ValueError:
                 print("Failed to convert balance data to integer.")
                 보유수량 = 0  # Assign a default value or handle it as needed
             except Exception as e:
                 print(f"An error occurred: {e}")
-                보유수량 = 0  # Optional: handle with a default value or other logic            
+                보유수량 = 0  # Optional: handle with a default value or other logic                         
             try:
                 매입가 = int(self._comm_get_data(trcode, "", rqname, i, "매입가"))
             except ValueError:
@@ -191,16 +209,28 @@ class KiwoomAPI(QMainWindow):
             except Exception as e:
                 print(f"An error occurred: {e}")
                 매입가 = 0  # Optional: handle with a default value or other logic
-                
+            try:
+                매입금액 = int(self._comm_get_data(trcode, "", rqname, i, "매입금액"))
+            except ValueError:
+                print("Failed to convert balance data to integer.")
+                매입금액 = 0  # Assign a default value or handle it as needed
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                매입금액 = 0  # Optional: handle with a default value or other logic  
+
+            수익률 = (현재가 - 매입가) / 매입가 * 100   
+            수익률 = round(수익률,2)
             if 종목코드 not in self.realtime_registed_codes:
                 self.register_code_to_realtime_list(종목코드)
 
             if 종목코드  not in self.stock_dict.keys():
                 self.stock_dict.update({종목코드:{}})
             
-            self.stock_dict[종목코드].update({"보유수량": 보유수량})
- 
+            self.stock_dict[종목코드].update({"현재가": 현재가})
             self.stock_dict[종목코드].update({"매입가": 매입가})
+            self.stock_dict[종목코드].update({"보유수량": 보유수량})
+            self.stock_dict[종목코드].update({"매입금액": 매입금액})
+            self.stock_dict[종목코드].update({"수익률": 수익률})
 
         for stock in self.stock_dict.keys():
             logger.info(f'{self.stock_dict[stock]}')    
@@ -615,10 +645,11 @@ class KiwoomAPI(QMainWindow):
             # 추가 매수 조건
             stock_info = self.stock_dict[stock_code]
             remaining_div_count = stock_info.get('div_count', 0)
-            avg_price = stock_info.get('매입가', current_price)
+            현재가 = stock_info.get('현재가', current_price)
+            매입가 = stock_info.get('매입가', current_price)
 
-            if remaining_div_count > 0 and current_price <= avg_price * self.BUY_DIV_PERCENT:
-                print(f"[{stock_code}] 추가 매수 진행: 현재가={current_price}, 평균가={avg_price}")
+            if self.buy_money > 현재가 and 현재가 <= 매입가 * self.BUY_DIV_PERCENT:
+                print(f"[{stock_code}] 추가 매수 진행: 현재가={현재가}, 평균가={매입가}")
             else:
                 print(f"[{stock_code}] 추가 매수 조건 미충족")
                 return
@@ -643,16 +674,11 @@ class KiwoomAPI(QMainWindow):
 
         # 7. 주문 결과 처리
         if order_result == 0:  # 주문 성공
-            if is_managed_stock:
-                # 추가 매수 시
-                self.stock_dict[stock_code]['div_count'] -= 1
-            else:
+            if is_managed_stock == False:
                 # 신규 매수 시
                 self.cal_cnt -= 1
-                self.stock_dict[stock_code] = {
-                    "div_count": self.MAX_BUY_DIV - 1
-                }
-            print(f"[{stock_code}] 매수 성공: 수량={buy_quantity}, 잔여 매수 횟수={self.stock_dict[stock_code]['div_count']}")
+                
+            print(f"[{stock_code}] 매수 성공: 수량={buy_quantity}")
             self.order_screen[stock_code] = screen_num
             
 
@@ -689,7 +715,7 @@ class KiwoomAPI(QMainWindow):
             stock_name = self.get_company_name(stock_code)
             화면번호 = self.stock_dict[stock_code].get("화면번호", "5000")
             보유수량 = self.stock_dict[stock_code].get("보유수량", 0)
-            매입가 = self.stock_dict[stock_code].get("매입가", None)
+            매입가 = self.stock_dict[stock_code].get("매입가", 현재가)
             if 매입가 is None or 현재가 is None:
                 print(f"매입가 또는 현재가가 유효하지 않습니다: {stock_code}")
 
